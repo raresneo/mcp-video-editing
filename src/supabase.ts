@@ -1,0 +1,91 @@
+import { createClient } from '@supabase/supabase-js';
+import { config } from './config.js';
+import { log } from './logger.js';
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
+
+export const supabase = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY, {
+  auth: { persistSession: false },
+});
+
+export async function ensureBucket(): Promise<void> {
+  const { data } = await supabase.storage.listBuckets();
+  const exists = data?.some((b) => b.name === config.SUPABASE_BUCKET);
+  if (!exists) {
+    const { error } = await supabase.storage.createBucket(config.SUPABASE_BUCKET, {
+      public: true,
+      fileSizeLimit: '250MB',
+    });
+    if (error) throw new Error(`createBucket failed: ${error.message}`);
+    log.info('created bucket', config.SUPABASE_BUCKET);
+  }
+}
+
+export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface Job {
+  id: string;
+  tool: string;
+  status: JobStatus;
+  idempotency_key: string | null;
+  input: unknown;
+  output_url: string | null;
+  error: string | null;
+  meta: unknown;
+}
+
+export async function findByIdempotency(key: string): Promise<Job | null> {
+  const { data } = await supabase
+    .from('video_jobs')
+    .select('*')
+    .eq('idempotency_key', key)
+    .maybeSingle();
+  return (data as Job) ?? null;
+}
+
+export async function createJob(
+  tool: string,
+  input: unknown,
+  idempotencyKey: string | null,
+): Promise<Job> {
+  const { data, error } = await supabase
+    .from('video_jobs')
+    .insert({ tool, input, idempotency_key: idempotencyKey, status: 'pending' })
+    .select('*')
+    .single();
+  if (error) throw new Error(`createJob failed: ${error.message}`);
+  return data as Job;
+}
+
+export async function updateJob(id: string, patch: Partial<Job>): Promise<void> {
+  const { error } = await supabase
+    .from('video_jobs')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) log.error('updateJob failed', error.message);
+}
+
+export async function getJob(id: string): Promise<Job | null> {
+  const { data } = await supabase.from('video_jobs').select('*').eq('id', id).maybeSingle();
+  return (data as Job) ?? null;
+}
+
+export async function uploadOutput(localPath: string, contentType: string): Promise<string> {
+  const key = `${Date.now()}-${basename(localPath)}`;
+  const bytes = await readFile(localPath);
+  const { error } = await supabase.storage
+    .from(config.SUPABASE_BUCKET)
+    .upload(key, bytes, { contentType, upsert: false });
+  
+  if (error) throw new Error(`upload failed: ${error.message}`);
+  
+  if (config.SIGNED_URL_TTL_S > 0) {
+    const { data, error: sErr } = await supabase.storage
+      .from(config.SUPABASE_BUCKET)
+      .createSignedUrl(key, config.SIGNED_URL_TTL_S);
+    if (sErr) throw new Error(`signed url failed: ${sErr.message}`);
+    return data.signedUrl;
+  }
+  
+  return supabase.storage.from(config.SUPABASE_BUCKET).getPublicUrl(key).data.publicUrl;
+}

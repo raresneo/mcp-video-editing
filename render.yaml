@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: mcp-video-editing
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: standard # ffmpeg vrea RAM; nu folosi free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: media-out
+      - key: CRON_SECRET
+        sync: false
+      - key: PORT
+        value: 10000
+      - key: MAX_DOWNLOAD_BYTES
+        value: 209715200
+      - key: JOB_TIMEOUT_MS
+        value: 300000
+      - key: SIGNED_URL_TTL_S
+        value: 604800
