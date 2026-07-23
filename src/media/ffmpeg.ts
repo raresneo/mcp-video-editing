@@ -1,8 +1,6 @@
 import ffmpegPath from 'ffmpeg-static';
-import ffprobeStaticPath from 'ffmpeg-static'; // ffprobe vine din imaginea Docker (apt)
 import Ffmpeg from 'fluent-ffmpeg';
 import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FONT_BOLD, TMP_DIR } from '../config.js';
 import { log } from '../logger.js';
@@ -60,7 +58,7 @@ export async function normalizeVideo(
   const out = await outPath('.mp4');
   const vf =
     `scale=${w}:${h}:force_original_aspect_ratio=increase,` +
-    `crop=${w}:${h},fps=${fps},format=yuv420p`;
+    `crop=${w}:${h},fps=${fps},format=yuv420p,setsar=1`;
   const cmd = Ffmpeg(input)
     .videoFilters(vf)
     .videoCodec('libx264')
@@ -85,7 +83,7 @@ export async function concatNormalized(
   transitionDur: number,
 ): Promise<string> {
   const out = await outPath('.mp4');
-  
+
   if (transition === 'none' || clips.length === 1) {
     // concat filter simplu (clipurile sunt deja identice ca format)
     const cmd = Ffmpeg();
@@ -97,21 +95,21 @@ export async function concatNormalized(
       '-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart']);
     return run(cmd, out);
   }
-  
+
   const preset = XFADE[transition] ?? XFADE.crossfade;
   const dur = transitionDur || preset!.d;
-  
+
   const durations: number[] = [];
   for (const c of clips) durations.push((await probe(c)).duration);
-  
+
   const cmd = Ffmpeg();
   clips.forEach((c) => cmd.input(c));
-  
+
   const filters: string[] = [];
   let lastV = '0:v';
   let lastA = '0:a';
   let cumulative = durations[0]!;
-  
+
   for (let i = 1; i < clips.length; i++) {
     const offset = Math.max(0, cumulative - dur);
     const vOut = `v${i}`;
@@ -124,7 +122,7 @@ export async function concatNormalized(
     lastA = aOut;
     cumulative = cumulative + durations[i]! - dur;
   }
-  
+
   cmd.complexFilter(filters, [lastV, lastA]);
   cmd.outputOptions([
     '-map', `[${lastV}]`, '-map', `[${lastA}]`,
@@ -145,42 +143,47 @@ export async function mixAudio(
   const out = await outPath('.mp4');
   const cmd = Ffmpeg(video);
   let idx = 1;
-  
+
   const musicIdx = music ? idx++ : -1;
   if (music) cmd.input(music);
-  
+
   const sfxIdx: number[] = [];
   for (const s of sfx) { cmd.input(s.path); sfxIdx.push(idx++); }
-  
+
   const filters: string[] = [];
-  const mixLabels: string[] = ['[0:a]']; // audio original video
-  
-  if (music) {
-    // loop + volume + (opțional) sidechain duck după vocea din video
+  const mixLabels: string[] = [];
+
+  if (music && duck) {
+    // [0:a] nu poate fi refolosit în filtergraph: îl spargem cu asplit.
+    // O copie intră în mix, cealaltă e sidechain key pentru duck.
+    filters.push(`[0:a]asplit=2[a0mix][a0key]`);
+    mixLabels.push('[a0mix]');
     filters.push(`[${musicIdx}:a]aloop=loop=-1:size=2e9,volume=${musicVolume}[mus]`);
-    if (duck) {
-      filters.push(`[mus][0:a]sidechaincompress=threshold=0.05:ratio=8:attack=5:release=250[musd]`);
-      mixLabels.push('[musd]');
-    } else {
+    filters.push(`[mus][a0key]sidechaincompress=threshold=0.05:ratio=8:attack=5:release=250[musd]`);
+    mixLabels.push('[musd]');
+  } else {
+    mixLabels.push('[0:a]');
+    if (music) {
+      filters.push(`[${musicIdx}:a]aloop=loop=-1:size=2e9,volume=${musicVolume}[mus]`);
       mixLabels.push('[mus]');
     }
   }
-  
+
   sfx.forEach((s, k) => {
     const ms = Math.round(s.at * 1000);
     filters.push(`[${sfxIdx[k]}:a]adelay=${ms}|${ms}[sfx${k}]`);
     mixLabels.push(`[sfx${k}]`);
   });
-  
+
   const n = mixLabels.length;
   filters.push(`${mixLabels.join('')}amix=inputs=${n}:duration=first:dropout_transition=0[aout]`);
-  
+
   cmd.complexFilter(filters, ['aout']);
   cmd.outputOptions([
     '-map', '0:v', '-map', '[aout]',
     '-c:v', 'copy', '-c:a', 'aac', '-shortest', '-movflags', '+faststart',
   ]);
-  
+
   return run(cmd, out);
 }
 
@@ -200,7 +203,7 @@ function esc(text: string): string {
   return text
     .replace(/\\/g, '\\\\')
     .replace(/:/g, '\\:')
-    .replace(/'/g, "’")
+    .replace(/'/g, "\u2019")
     .replace(/%/g, '\\%');
 }
 
@@ -218,7 +221,7 @@ export async function drawCaptions(
     const boxPart = box
       ? `:box=1:boxcolor=${box}@0.9:boxborderw=18`
       : `:borderw=3:bordercolor=black@0.8`;
-    
+
     return (
       `drawtext=fontfile=${FONT_BOLD}:text='${esc(c.text)}':` +
       `fontsize=${fontsize}:fontcolor=${color}:` +
@@ -226,7 +229,7 @@ export async function drawCaptions(
       `enable='between(t,${c.start},${c.end})'`
     );
   });
-  
+
   const cmd = Ffmpeg(input)
     .videoFilters(filters)
     .videoCodec('libx264')
@@ -247,11 +250,11 @@ export async function normalizeVideoForPlatform(
     log.info('normalize video: pass-through', JSON.stringify(p));
     return { path: input, passthrough: true };
   }
-  
+
   const out = await outPath('.mp4');
   const vf =
     `scale=${w}:${h}:force_original_aspect_ratio=increase,` +
-    `crop=${w}:${h},format=yuv420p`;
+    `crop=${w}:${h},format=yuv420p,setsar=1`;
   const cmd = Ffmpeg(input)
     .videoFilters(vf)
     .duration(60)
