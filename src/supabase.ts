@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { config } from './config.js';
 import { log } from './logger.js';
-import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { basename } from 'node:path';
 
 export const supabase = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY, {
@@ -72,10 +72,10 @@ export async function getJob(id: string): Promise<Job | null> {
 
 export async function uploadOutput(localPath: string, contentType: string): Promise<string> {
   const key = `${Date.now()}-${basename(localPath)}`;
-  const bytes = await readFile(localPath);
+  const stream = createReadStream(localPath);
   const { error } = await supabase.storage
     .from(config.SUPABASE_BUCKET)
-    .upload(key, bytes, { contentType, upsert: false });
+    .upload(key, stream, { contentType, upsert: false, duplex: 'half' });
   
   if (error) throw new Error(`upload failed: ${error.message}`);
   

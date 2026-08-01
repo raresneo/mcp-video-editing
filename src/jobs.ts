@@ -1,6 +1,9 @@
 import { config } from './config.js';
 import { log } from './logger.js';
 import { createJob, updateJob, findByIdempotency, type Job } from './supabase.js';
+import pLimit from 'p-limit';
+
+const limit = pLimit(2); // Limit concurrent heavy jobs to 2
 
 // Rezultatul unui handler de tool: path local final + content-type pt upload.
 export interface ToolResult {
@@ -27,10 +30,10 @@ export async function enqueue(
   }
 
   const job = await createJob(tool, input, idempotencyKey);
-
-  // fire-and-forget cu timeout
-  void process(job, handler);
-
+  
+  // fire-and-forget cu timeout și limită de concurență
+  void limit(() => process(job, handler));
+  
   return { job_id: job.id, status: 'pending', output_url: null };
 }
 

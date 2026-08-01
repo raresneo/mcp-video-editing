@@ -62,7 +62,7 @@ export async function normalizeVideo(
   const cmd = Ffmpeg(input)
     .videoFilters(vf)
     .videoCodec('libx264')
-    .outputOptions(['-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart'])
+    .outputOptions(['-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-threads', '2'])
     .audioCodec('aac')
     .audioFrequency(48000)
     .audioChannels(2);
@@ -92,7 +92,7 @@ export async function concatNormalized(
     const streams = clips.map((_, i) => `[${i}:v][${i}:a]`).join('');
     cmd.complexFilter([`${streams}concat=n=${n}:v=1:a=1[v][a]`]);
     cmd.outputOptions(['-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-c:a', 'aac',
-      '-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart']);
+      '-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-threads', '2']);
     return run(cmd, out);
   }
 
@@ -127,7 +127,7 @@ export async function concatNormalized(
   cmd.outputOptions([
     '-map', `[${lastV}]`, '-map', `[${lastA}]`,
     '-c:v', 'libx264', '-c:a', 'aac',
-    '-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart',
+    '-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-threads', '2',
   ]);
   return run(cmd, out);
 }
@@ -194,7 +194,7 @@ export async function trim(input: string, start: number, end: number): Promise<s
     .duration(Math.max(0.05, end - start))
     .videoCodec('libx264')
     .audioCodec('aac')
-    .outputOptions(['-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart']);
+    .outputOptions(['-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-threads', '2']);
   return run(cmd, out);
 }
 
@@ -234,7 +234,7 @@ export async function drawCaptions(
     .videoFilters(filters)
     .videoCodec('libx264')
     .audioCodec('aac')
-    .outputOptions(['-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart']);
+    .outputOptions(['-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-threads', '2']);
   return run(cmd, out);
 }
 
@@ -260,6 +260,6 @@ export async function normalizeVideoForPlatform(
     .duration(60)
     .videoCodec('libx264')
     .audioCodec('aac')
-    .outputOptions(['-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart']);
+    .outputOptions(['-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-threads', '2']);
   return { path: await run(cmd, out), passthrough: false };
 }
