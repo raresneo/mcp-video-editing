@@ -34,54 +34,28 @@ async function waitJob(jobId) {
   throw new Error('timeout poll');
 }
 
-// URL-uri demo (înlocuiește cu ale tale din Higgsfield/Drive).
-const CLIP1 = process.env.CLIP1 ?? 'https://example.com/clip1.mp4';
-const CLIP2 = process.env.CLIP2 ?? 'https://example.com/clip2.mp4';
-const CLIP3 = process.env.CLIP3 ?? 'https://example.com/clip3.mp4';
-const WHOOSH = process.env.WHOOSH ?? 'https://example.com/whoosh.mp3';
-const PNG = process.env.PNG ?? 'https://example.com/story.png';
+// Un clip real, de test, public.
+const TEST_CLIP = 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
 
 async function main() {
   console.log('init:', (await rpc('initialize', {})).serverInfo);
-  console.log('tools:', (await rpc('tools/list', {})).tools.map((t) => t.name).join(', '));
+  const toolsList = (await rpc('tools/list', {})).tools.map((t) => t.name);
+  console.log('tools:', toolsList.join(', '));
   
-  // (1) Lipește 3 clipuri cu whip transition.
-  console.log('\n[1] concat_clips (whip)');
-  const c = await callTool('concat_clips', {
-    clips: [CLIP1, CLIP2, CLIP3],
-    transition: 'whip',
-    transition_duration_s: 0.2,
-    output: { w: 1080, h: 1920 }, fps: 30,
-    idempotency_key: 'demo-concat-1',
+  if (!toolsList.includes('trim_clip')) {
+    throw new Error('Serverul nu exporta trim_clip!');
+  }
+  
+  console.log('\n[Acceptance Test] trim_clip');
+  console.log(`Tai clip-ul de la secunda 2 la secunda 6...`);
+  const c = await callTool('trim_clip', {
+    video_url: TEST_CLIP,
+    start_s: 2,
+    end_s: 6,
+    idempotency_key: `test-trim-${Date.now()}`,
   });
-  const concatJob = await waitJob(c.job_id);
-  console.log('\n->', concatJob.output_url);
-  
-  // (2) Adaugă whoosh pe fiecare tranziție (~la joncțiuni).
-  console.log('\n[2] add_audio (whoosh pe tranziții)');
-  const a = await callTool('add_audio', {
-    video_url: concatJob.output_url,
-    sfx: [
-      { url: WHOOSH, at_seconds: 2.8 },
-      { url: WHOOSH, at_seconds: 5.6 },
-    ],
-    music_volume: 0.6,
-    idempotency_key: 'demo-audio-1',
-  });
-  const audioJob = await waitJob(a.job_id);
-  console.log('\n->', audioJob.output_url);
-  
-  // (3) Normalizează PNG -> JPEG story 1080x1920 (rezolvă story negru).
-  console.log('\n[3] normalize_for_platform (PNG -> story)');
-  const n = await callTool('normalize_for_platform', {
-    media_url: PNG,
-    target_format: 'story',
-    idempotency_key: 'demo-norm-1',
-  });
-  const normJob = await waitJob(n.job_id);
-  console.log('\n->', normJob.output_url, normJob.meta);
-  
-  console.log('\nDONE. Pasează aceste URL-uri în mcp-social publish_social / publish_story.');
+  const trimJob = await waitJob(c.job_id);
+  console.log('\n✅ SUCCES ->', trimJob.output_url);
 }
 
 main().catch((e) => { console.error('\nFAIL:', e.message); process.exit(1); });

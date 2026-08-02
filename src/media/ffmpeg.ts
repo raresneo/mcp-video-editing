@@ -92,7 +92,7 @@ export async function concatNormalized(
     const streams = clips.map((_, i) => `[${i}:v][${i}:a]`).join('');
     cmd.complexFilter([`${streams}concat=n=${n}:v=1:a=1[v][a]`]);
     cmd.outputOptions(['-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-c:a', 'aac',
-      '-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-threads', '2']);
+      '-preset', 'veryfast', '-crf', '24', '-maxrate', '2500k', '-bufsize', '5000k', '-movflags', '+faststart', '-threads', '2']);
     return run(cmd, out);
   }
 
@@ -127,7 +127,7 @@ export async function concatNormalized(
   cmd.outputOptions([
     '-map', `[${lastV}]`, '-map', `[${lastA}]`,
     '-c:v', 'libx264', '-c:a', 'aac',
-    '-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-threads', '2',
+    '-preset', 'veryfast', '-crf', '24', '-maxrate', '2500k', '-bufsize', '5000k', '-movflags', '+faststart', '-threads', '2',
   ]);
   return run(cmd, out);
 }
@@ -194,7 +194,7 @@ export async function trim(input: string, start: number, end: number): Promise<s
     .duration(Math.max(0.05, end - start))
     .videoCodec('libx264')
     .audioCodec('aac')
-    .outputOptions(['-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-threads', '2']);
+    .outputOptions(['-preset', 'veryfast', '-crf', '24', '-maxrate', '2500k', '-bufsize', '5000k', '-movflags', '+faststart', '-threads', '2']);
   return run(cmd, out);
 }
 
@@ -234,7 +234,7 @@ export async function drawCaptions(
     .videoFilters(filters)
     .videoCodec('libx264')
     .audioCodec('aac')
-    .outputOptions(['-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-threads', '2']);
+    .outputOptions(['-preset', 'veryfast', '-crf', '24', '-maxrate', '2500k', '-bufsize', '5000k', '-movflags', '+faststart', '-threads', '2']);
   return run(cmd, out);
 }
 
@@ -260,6 +260,6 @@ export async function normalizeVideoForPlatform(
     .duration(60)
     .videoCodec('libx264')
     .audioCodec('aac')
-    .outputOptions(['-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-threads', '2']);
+    .outputOptions(['-preset', 'veryfast', '-crf', '24', '-maxrate', '2500k', '-bufsize', '5000k', '-movflags', '+faststart', '-threads', '2']);
   return { path: await run(cmd, out), passthrough: false };
 }
