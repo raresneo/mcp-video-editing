@@ -35,7 +35,7 @@ async function waitJob(jobId) {
 }
 
 // Un clip real, de test, public.
-const TEST_CLIP = 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
+const TEST_CLIP = 'https://www.w3schools.com/html/mov_bbb.mp4';
 
 async function main() {
   console.log('init:', (await rpc('initialize', {})).serverInfo);

@@ -14,7 +14,7 @@ services:
       - key: SUPABASE_BUCKET
         value: media-out
       - key: CRON_SECRET
-        sync: false
+        generateValue: true
       - key: PORT
         value: 10000
       - key: MAX_DOWNLOAD_BYTES
