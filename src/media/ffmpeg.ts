@@ -48,6 +48,14 @@ function run(cmd: Ffmpeg.FfmpegCommand, out: string): Promise<string> {
   });
 }
 
+function getOutputOptions(duration: number): string[] {
+  if (duration <= 60) {
+    return ['-preset', 'veryfast', '-crf', '20', '-maxrate', '8000k', '-bufsize', '16000k', '-movflags', '+faststart', '-threads', '2'];
+  }
+  const maxrate = Math.floor(360000 / duration);
+  return ['-preset', 'veryfast', '-crf', '24', '-maxrate', `${maxrate}k`, '-bufsize', `${maxrate * 2}k`, '-movflags', '+faststart', '-threads', '2'];
+}
+
 // Normalizează un video la w/h/fps, H.264+AAC, cover+crop (fără bare negre).
 export async function normalizeVideo(
   input: string,
@@ -55,6 +63,7 @@ export async function normalizeVideo(
   h: number,
   fps: number,
 ): Promise<string> {
+  const p = await probe(input);
   const out = await outPath('.mp4');
   const vf =
     `scale=${w}:${h}:force_original_aspect_ratio=increase,` +
@@ -62,7 +71,7 @@ export async function normalizeVideo(
   const cmd = Ffmpeg(input)
     .videoFilters(vf)
     .videoCodec('libx264')
-    .outputOptions(['-preset', 'veryfast', '-crf', '20', '-movflags', '+faststart', '-threads', '2'])
+    .outputOptions(getOutputOptions(p.duration))
     .audioCodec('aac')
     .audioFrequency(48000)
     .audioChannels(2);
@@ -84,23 +93,23 @@ export async function concatNormalized(
 ): Promise<string> {
   const out = await outPath('.mp4');
 
+  const durations: number[] = [];
+  for (const c of clips) durations.push((await probe(c)).duration);
+
   if (transition === 'none' || clips.length === 1) {
     // concat filter simplu (clipurile sunt deja identice ca format)
     const cmd = Ffmpeg();
     clips.forEach((c) => cmd.input(c));
     const n = clips.length;
     const streams = clips.map((_, i) => `[${i}:v][${i}:a]`).join('');
+    const totalDuration = durations.reduce((a, b) => a + b, 0);
     cmd.complexFilter([`${streams}concat=n=${n}:v=1:a=1[v][a]`]);
-    cmd.outputOptions(['-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-c:a', 'aac',
-      '-preset', 'veryfast', '-crf', '24', '-maxrate', '2500k', '-bufsize', '5000k', '-movflags', '+faststart', '-threads', '2']);
+    cmd.outputOptions(['-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-c:a', 'aac', ...getOutputOptions(totalDuration)]);
     return run(cmd, out);
   }
 
   const preset = XFADE[transition] ?? XFADE.crossfade;
   const dur = transitionDur || preset!.d;
-
-  const durations: number[] = [];
-  for (const c of clips) durations.push((await probe(c)).duration);
 
   const cmd = Ffmpeg();
   clips.forEach((c) => cmd.input(c));
@@ -127,7 +136,7 @@ export async function concatNormalized(
   cmd.outputOptions([
     '-map', `[${lastV}]`, '-map', `[${lastA}]`,
     '-c:v', 'libx264', '-c:a', 'aac',
-    '-preset', 'veryfast', '-crf', '24', '-maxrate', '2500k', '-bufsize', '5000k', '-movflags', '+faststart', '-threads', '2',
+    ...getOutputOptions(cumulative),
   ]);
   return run(cmd, out);
 }
@@ -189,12 +198,13 @@ export async function mixAudio(
 
 export async function trim(input: string, start: number, end: number): Promise<string> {
   const out = await outPath('.mp4');
+  const duration = Math.max(0.05, end - start);
   const cmd = Ffmpeg(input)
     .setStartTime(start)
-    .duration(Math.max(0.05, end - start))
+    .duration(duration)
     .videoCodec('libx264')
     .audioCodec('aac')
-    .outputOptions(['-preset', 'veryfast', '-crf', '24', '-maxrate', '2500k', '-bufsize', '5000k', '-movflags', '+faststart', '-threads', '2']);
+    .outputOptions(getOutputOptions(duration));
   return run(cmd, out);
 }
 
@@ -230,11 +240,12 @@ export async function drawCaptions(
     );
   });
 
+  const p = await probe(input);
   const cmd = Ffmpeg(input)
     .videoFilters(filters)
     .videoCodec('libx264')
     .audioCodec('aac')
-    .outputOptions(['-preset', 'veryfast', '-crf', '24', '-maxrate', '2500k', '-bufsize', '5000k', '-movflags', '+faststart', '-threads', '2']);
+    .outputOptions(getOutputOptions(p.duration));
   return run(cmd, out);
 }
 
@@ -260,6 +271,6 @@ export async function normalizeVideoForPlatform(
     .duration(60)
     .videoCodec('libx264')
     .audioCodec('aac')
-    .outputOptions(['-preset', 'veryfast', '-crf', '24', '-maxrate', '2500k', '-bufsize', '5000k', '-movflags', '+faststart', '-threads', '2']);
+    .outputOptions(getOutputOptions(Math.min(60, p.duration)));
   return { path: await run(cmd, out), passthrough: false };
 }
