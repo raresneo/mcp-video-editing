@@ -1,6 +1,6 @@
 import ffmpegPath from 'ffmpeg-static';
 import Ffmpeg from 'fluent-ffmpeg';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { FONT_BOLD, TMP_DIR } from '../config.js';
 import { log } from '../logger.js';
@@ -123,13 +123,13 @@ export async function concatNormalized(
         const res = await fetch(c, { signal: AbortSignal.timeout(30000) });
         if (!res.ok) throw new Error(`Failed to download ${c}`);
         const arr = await res.arrayBuffer();
-        await require('node:fs/promises').writeFile(dest, Buffer.from(arr));
+        await writeFile(dest, Buffer.from(arr));
         return dest;
       }
       return c;
     }));
     const content = localClips.map(c => `file '${c.replace(/'/g, "'\\''")}'`).join('\n');
-    await require('node:fs/promises').writeFile(listTxt, content);
+    await writeFile(listTxt, content);
     
     const cmd = Ffmpeg()
       .input(listTxt)
@@ -178,7 +178,7 @@ export async function concatNormalized(
     cumulative = totalDuration;
   }
 
-  await require('node:fs/promises').copyFile(currentFile, out);
+  await copyFile(currentFile, out);
   return out;
 }
 
