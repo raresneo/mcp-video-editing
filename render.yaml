@@ -14,7 +14,7 @@ services:
       - key: SUPABASE_BUCKET
         value: media-out
       - key: CRON_SECRET
-        generateValue: true
+        value: super-parola-mea-123
       - key: PORT
         value: 10000
       - key: MAX_DOWNLOAD_BYTES
