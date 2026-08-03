@@ -88,3 +88,12 @@ export async function uploadOutput(localPath: string, contentType: string): Prom
   
   return supabase.storage.from(config.SUPABASE_BUCKET).getPublicUrl(key).data.publicUrl;
 }
+
+export async function recoverStuckJobs(): Promise<void> {
+  const { error } = await supabase
+    .from('video_jobs')
+    .update({ status: 'failed', error: 'Server restarted unexpectedly during processing' })
+    .eq('status', 'processing');
+  if (error) log.error('recoverStuckJobs failed', error.message);
+  else log.info('Recovered any stuck processing jobs');
+}

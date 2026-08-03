@@ -1,7 +1,7 @@
 import express from 'express';
 import { config } from './config.js';
 import { log } from './logger.js';
-import { ensureBucket } from './supabase.js';
+import { ensureBucket, recoverStuckJobs } from './supabase.js';
 import { handleRpc } from './mcp/server.js';
 
 const app = express();
@@ -26,6 +26,7 @@ app.post('/api/mcp', async (req, res) => {
 
 async function main() {
   await ensureBucket();
+  await recoverStuckJobs();
   app.listen(config.PORT, () => log.info(`mcp-video-editing on :${config.PORT}`));
 }
 

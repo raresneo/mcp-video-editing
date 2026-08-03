@@ -42,20 +42,23 @@ async function main() {
   const toolsList = (await rpc('tools/list', {})).tools.map((t) => t.name);
   console.log('tools:', toolsList.join(', '));
   
-  if (!toolsList.includes('trim_clip')) {
-    throw new Error('Serverul nu exporta trim_clip!');
+  if (!toolsList.includes('concat_clips')) {
+    throw new Error('Serverul nu exporta concat_clips!');
   }
   
-  console.log('\n[Acceptance Test] trim_clip');
-  console.log(`Tai clip-ul de la secunda 2 la secunda 6...`);
-  const c = await callTool('trim_clip', {
-    video_url: TEST_CLIP,
-    start_s: 2,
-    end_s: 6,
-    idempotency_key: `test-trim-${Date.now()}`,
+  console.log('\n[Acceptance Test] concat_clips (fast path stream copy)');
+  const c = await callTool('concat_clips', {
+    clips: [TEST_CLIP, TEST_CLIP, TEST_CLIP],
+    transition: 'none',
+    transition_duration_s: 0,
+    output: { w: 1080, h: 1920 },
+    fps: 30,
+    idempotency_key: `test-concat-fast-${Date.now()}`,
   });
-  const trimJob = await waitJob(c.job_id);
-  console.log('\n✅ SUCCES ->', trimJob.output_url);
+  
+  process.stdout.write('⏳ Aștept procesarea...');
+  const concatJob = await waitJob(c.job_id);
+  console.log('\n✅ SUCCES ->', concatJob.output_url);
 }
 
 main().catch((e) => { console.error('\nFAIL:', e.message); process.exit(1); });

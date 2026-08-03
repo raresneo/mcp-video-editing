@@ -14,6 +14,10 @@ export interface Probe {
   width: number;
   height: number;
   hasAudio: boolean;
+  videoCodec?: string;
+  audioCodec?: string;
+  fps?: string;
+  pixFmt?: string;
 }
 
 export function probe(path: string): Promise<Probe> {
@@ -27,6 +31,10 @@ export function probe(path: string): Promise<Probe> {
         width: Number(v?.width ?? 0),
         height: Number(v?.height ?? 0),
         hasAudio: Boolean(a),
+        videoCodec: v?.codec_name,
+        audioCodec: a?.codec_name,
+        fps: v?.r_frame_rate || v?.avg_frame_rate,
+        pixFmt: v?.pix_fmt,
       });
     });
   });
@@ -93,52 +101,74 @@ export async function concatNormalized(
 ): Promise<string> {
   const out = await outPath('.mp4');
 
-  const durations: number[] = [];
-  for (const c of clips) durations.push((await probe(c)).duration);
+  const probes: Probe[] = [];
+  for (const c of clips) probes.push(await probe(c));
 
-  if (transition === 'none' || clips.length === 1) {
-    // concat filter simplu (clipurile sunt deja identice ca format)
-    const cmd = Ffmpeg();
-    clips.forEach((c) => cmd.input(c));
-    const n = clips.length;
-    const streams = clips.map((_, i) => `[${i}:v][${i}:a]`).join('');
-    const totalDuration = durations.reduce((a, b) => a + b, 0);
-    cmd.complexFilter([`${streams}concat=n=${n}:v=1:a=1[v][a]`]);
-    cmd.outputOptions(['-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-c:a', 'aac', ...getOutputOptions(totalDuration)]);
+  const canCopy = transition === 'none' && probes.length > 1 && probes.every((p, i, arr) => {
+    if (i === 0) return true;
+    return p.videoCodec === arr[0].videoCodec &&
+           p.audioCodec === arr[0].audioCodec &&
+           p.width === arr[0].width &&
+           p.height === arr[0].height &&
+           p.fps === arr[0].fps &&
+           p.pixFmt === arr[0].pixFmt;
+  });
+
+  if (canCopy) {
+    log.info('concat: using fast path (stream copy)');
+    const listTxt = await outPath('.txt');
+    const content = clips.map(c => `file '${c.replace(/'/g, "'\\''")}'`).join('\n');
+    await require('node:fs/promises').writeFile(listTxt, content);
+    
+    const cmd = Ffmpeg()
+      .input(listTxt)
+      .inputOptions(['-f', 'concat', '-safe', '0'])
+      .outputOptions(['-c', 'copy']);
     return run(cmd, out);
   }
 
+  log.info('concat: fallback to sequential re-encode');
+  
   const preset = XFADE[transition] ?? XFADE.crossfade;
-  const dur = transitionDur || preset!.d;
+  const dur = transition === 'none' ? 0 : (transitionDur || preset!.d);
+  const isXfade = transition !== 'none';
+  const tType = preset!.t;
 
-  const cmd = Ffmpeg();
-  clips.forEach((c) => cmd.input(c));
-
-  const filters: string[] = [];
-  let lastV = '0:v';
-  let lastA = '0:a';
-  let cumulative = durations[0]!;
+  let currentFile = clips[0];
+  let cumulative = probes[0].duration;
 
   for (let i = 1; i < clips.length; i++) {
-    const offset = Math.max(0, cumulative - dur);
-    const vOut = `v${i}`;
-    const aOut = `a${i}`;
-    filters.push(
-      `[${lastV}][${i}:v]xfade=transition=${preset!.t}:duration=${dur}:offset=${offset.toFixed(3)}[${vOut}]`,
-    );
-    filters.push(`[${lastA}][${i}:a]acrossfade=d=${dur}[${aOut}]`);
-    lastV = vOut;
-    lastA = aOut;
-    cumulative = cumulative + durations[i]! - dur;
+    const nextFile = clips[i];
+    const nextDur = probes[i].duration;
+    const outTmp = await outPath('.mp4');
+    const cCmd = Ffmpeg();
+    cCmd.input(currentFile).input(nextFile);
+
+    const totalDuration = isXfade ? cumulative + nextDur - dur : cumulative + nextDur;
+
+    if (isXfade) {
+      const offset = Math.max(0, cumulative - dur);
+      cCmd.complexFilter([
+        `[0:v][1:v]xfade=transition=${tType}:duration=${dur}:offset=${offset.toFixed(3)}[v]`,
+        `[0:a][1:a]acrossfade=d=${dur}[a]`
+      ], ['v', 'a']);
+    } else {
+      cCmd.complexFilter([
+        `[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]`
+      ], ['v', 'a']);
+    }
+
+    cCmd.outputOptions([
+      '-c:v', 'libx264', '-c:a', 'aac',
+      ...getOutputOptions(totalDuration)
+    ]);
+    
+    currentFile = await run(cCmd, outTmp);
+    cumulative = totalDuration;
   }
 
-  cmd.complexFilter(filters, [lastV, lastA]);
-  cmd.outputOptions([
-    '-map', `[${lastV}]`, '-map', `[${lastA}]`,
-    '-c:v', 'libx264', '-c:a', 'aac',
-    ...getOutputOptions(cumulative),
-  ]);
-  return run(cmd, out);
+  await require('node:fs/promises').copyFile(currentFile, out);
+  return out;
 }
 
 // Muzică de fundal + SFX la timpi exacți peste audio-ul original.
