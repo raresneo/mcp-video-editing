@@ -9,13 +9,18 @@ export async function generateMusicLyria(
   mood?: string,
   has_build?: boolean
 ): Promise<string> {
-  const projectId = process.env.GOOGLE_CLOUD_PROJECT;
-  if (!projectId) {
-    throw new Error('GOOGLE_CLOUD_PROJECT nu este setat.');
-  }
+  const projectId = process.env.GOOGLE_CLOUD_PROJECT || 'mcp-video-photo-social';
 
-  // GoogleGenAI va folosi automat GOOGLE_APPLICATION_CREDENTIALS din mediu
-  const client = new GoogleGenAI({});
+  let client;
+  if (process.env.GOOGLE_CREDENTIALS_JSON) {
+    const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+    client = new GoogleGenAI({ 
+      vertexai: { project: projectId, location: 'us-central1' },
+      credentials: { client_email: creds.client_email, private_key: creds.private_key } 
+    });
+  } else {
+    client = new GoogleGenAI({ vertexai: { project: projectId, location: 'us-central1' } });
+  }
   const modelId = duration_s <= 30 ? 'lyria-3-clip-preview' : 'lyria-3-pro-preview';
   
   log.info(`Apelăm Vertex AI ${modelId} pentru generare muzică...`);
