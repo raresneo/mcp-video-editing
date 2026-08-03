@@ -122,7 +122,7 @@ export async function concatNormalized(
     
     const cmd = Ffmpeg()
       .input(listTxt)
-      .inputOptions(['-f', 'concat', '-safe', '0'])
+      .inputOptions(['-f', 'concat', '-safe', '0', '-protocol_whitelist', 'file,http,https,tcp,tls'])
       .outputOptions(['-c', 'copy']);
     return run(cmd, out);
   }

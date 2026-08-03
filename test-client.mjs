@@ -13,7 +13,13 @@ async function rpc(method, params) {
     method: 'POST', headers,
     body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
   });
-  const json = await res.json();
+  let json;
+  try {
+    json = await res.json();
+  } catch (e) {
+    const txt = await res.text();
+    throw new Error(`JSON parse failed. Status: ${res.status}. Body: ${txt}`);
+  }
   if (json.error) throw new Error(`${method}: ${json.error.message}`);
   return json.result;
 }
