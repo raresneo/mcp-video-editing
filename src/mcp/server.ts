@@ -10,6 +10,7 @@ import {
   drawCaptions, normalizeVideoForPlatform,
 } from '../media/ffmpeg.js';
 import { normalizeImage, textOverlayImage } from '../media/image.js';
+import { execSync } from 'node:child_process';
 
 // ---- Handlerele efective (rulează în background prin jobs.enqueue) ----
 
@@ -132,6 +133,9 @@ async function hOverlay(input: any) {
 
 // Mapare tool -> handler async (toate întorc job_id, mai puțin get_job_status care e sincron).
 export async function runTool(name: string, args: any): Promise<any> {
+  if (name === 'test_grep') {
+    return { output: execSync('/usr/bin/ffmpeg -filters | grep drawtext').toString() };
+  }
   const key = args?.idempotency_key ?? null;
   switch (name) {
     case 'concat_clips': return enqueue(name, args, key, hConcat);

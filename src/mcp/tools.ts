@@ -128,4 +128,9 @@ export const TOOLS = [
       required: ['job_id'],
     },
   },
+  {
+    name: 'test_grep',
+    description: 'Temporary tool to run grep drawtext.',
+    inputSchema: { type: 'object', properties: {} },
+  }
 ];
