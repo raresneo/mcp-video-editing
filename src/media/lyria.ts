@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { supabase } from '../supabase.js';
 import { log } from '../logger.js';
+import * as fs from 'fs';
 
 export async function generateMusicLyria(
   prompt: string,
@@ -11,18 +12,17 @@ export async function generateMusicLyria(
 ): Promise<string> {
   const projectId = process.env.GOOGLE_CLOUD_PROJECT || 'mcp-video-photo-social';
 
-  let client;
-  if (process.env.GOOGLE_CREDENTIALS_JSON) {
-    const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
-    client = new GoogleGenAI({ 
-      project: projectId, 
-      location: 'us-central1',
-      vertexai: true,
-      credentials: { client_email: creds.client_email, private_key: creds.private_key } 
-    });
-  } else {
-    client = new GoogleGenAI({ project: projectId, location: 'us-central1', vertexai: true });
+  if (process.env.GOOGLE_CREDENTIALS_JSON && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    const tmpPath = '/tmp/gcp-credentials.json';
+    fs.writeFileSync(tmpPath, process.env.GOOGLE_CREDENTIALS_JSON);
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = tmpPath;
   }
+
+  const client = new GoogleGenAI({ 
+    project: projectId, 
+    location: 'us-central1',
+    vertexai: true
+  });
   const modelId = duration_s <= 30 ? 'lyria-3-clip-preview' : 'lyria-3-pro-preview';
   
   log.info(`Apelăm Vertex AI ${modelId} pentru generare muzică...`);
