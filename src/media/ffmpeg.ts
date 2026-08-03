@@ -106,12 +106,12 @@ export async function concatNormalized(
 
   const canCopy = transition === 'none' && probes.length > 1 && probes.every((p, i, arr) => {
     if (i === 0) return true;
-    return p.videoCodec === arr[0].videoCodec &&
-           p.audioCodec === arr[0].audioCodec &&
-           p.width === arr[0].width &&
-           p.height === arr[0].height &&
-           p.fps === arr[0].fps &&
-           p.pixFmt === arr[0].pixFmt;
+    return p.videoCodec === arr[0]!.videoCodec &&
+           p.audioCodec === arr[0]!.audioCodec &&
+           p.width === arr[0]!.width &&
+           p.height === arr[0]!.height &&
+           p.fps === arr[0]!.fps &&
+           p.pixFmt === arr[0]!.pixFmt;
   });
 
   if (canCopy) {
@@ -145,12 +145,12 @@ export async function concatNormalized(
   const isXfade = transition !== 'none';
   const tType = preset!.t;
 
-  let currentFile = clips[0];
-  let cumulative = probes[0].duration;
+  let currentFile = clips[0]!;
+  let cumulative = probes[0]!.duration;
 
   for (let i = 1; i < clips.length; i++) {
-    const nextFile = clips[i];
-    const nextDur = probes[i].duration;
+    const nextFile = clips[i]!;
+    const nextDur = probes[i]!.duration;
     const outTmp = await outPath('.mp4');
     const cCmd = Ffmpeg();
     cCmd.input(currentFile).input(nextFile);
