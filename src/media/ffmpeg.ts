@@ -120,7 +120,7 @@ export async function concatNormalized(
     const localClips = await Promise.all(clips.map(async (c, i) => {
       if (c.startsWith('http')) {
         const dest = await outPath(`.clip${i}.mp4`);
-        const res = await fetch(c);
+        const res = await fetch(c, { signal: AbortSignal.timeout(30000) });
         if (!res.ok) throw new Error(`Failed to download ${c}`);
         const arr = await res.arrayBuffer();
         await require('node:fs/promises').writeFile(dest, Buffer.from(arr));
@@ -134,7 +134,7 @@ export async function concatNormalized(
     const cmd = Ffmpeg()
       .input(listTxt)
       .inputOptions(['-f', 'concat', '-safe', '0'])
-      .outputOptions(['-c', 'copy']);
+      .outputOptions(['-c', 'copy', '-y']);
     return run(cmd, out);
   }
 
