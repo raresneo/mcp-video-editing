@@ -41,7 +41,7 @@ async function waitJob(jobId) {
 }
 
 // Un clip real, de test, public.
-const TEST_CLIP = 'https://www.w3schools.com/html/mov_bbb.mp4';
+const TEST_CLIP = 'https://raw.githubusercontent.com/mdn/learning-area/master/html/multimedia-and-embedding/video-and-audio-content/rabbit320.mp4';
 
 async function main() {
   console.log('init:', (await rpc('initialize', {})).serverInfo);

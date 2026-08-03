@@ -13,25 +13,48 @@ import { normalizeImage, textOverlayImage } from '../media/image.js';
 
 // ---- Handlerele efective (rulează în background prin jobs.enqueue) ----
 
+import { probe } from '../media/ffmpeg.js';
+
 async function hConcat(input: any) {
   const tmp: string[] = [];
   try {
     const w = input.output?.w ?? 1080;
     const h = input.output?.h ?? 1920;
     const fps = input.fps ?? 30;
-    const normalized: string[] = [];
+    const downloaded: string[] = [];
+    const probes: any[] = [];
     
     for (const url of input.clips) {
       const dl = await downloadToTmp(url);
       tmp.push(dl.path);
-      // Normalizare OBLIGATORIE înainte de concat (rezoluții diferite = ffmpeg crapă).
-      const n = await normalizeVideo(dl.path, w, h, fps);
-      tmp.push(n);
-      normalized.push(n);
+      downloaded.push(dl.path);
+      probes.push(await probe(dl.path));
     }
     
-    const out = await concatNormalized(normalized, input.transition ?? 'none', input.transition_duration_s ?? 0.3);
-    return { localPath: out, contentType: 'video/mp4', meta: { clips: input.clips.length, w, h, fps } };
+    const transition = input.transition ?? 'none';
+    const canCopy = transition === 'none' && probes.length > 1 && probes.every((p, i, arr) => {
+      if (i === 0) return true;
+      return p.videoCodec === arr[0].videoCodec &&
+             p.audioCodec === arr[0].audioCodec &&
+             p.width === arr[0].width &&
+             p.height === arr[0].height &&
+             p.fps === arr[0].fps &&
+             p.pixFmt === arr[0].pixFmt;
+    });
+
+    let finalClips = downloaded;
+    
+    if (!canCopy) {
+      finalClips = [];
+      for (const path of downloaded) {
+        const n = await normalizeVideo(path, w, h, fps);
+        tmp.push(n);
+        finalClips.push(n);
+      }
+    }
+    
+    const out = await concatNormalized(finalClips, transition, input.transition_duration_s ?? 0.3);
+    return { localPath: out, contentType: 'video/mp4', meta: { clips: input.clips.length, w, h, fps, fastPath: canCopy } };
   } finally {
     await cleanup(tmp);
   }
