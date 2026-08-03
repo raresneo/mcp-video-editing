@@ -117,12 +117,23 @@ export async function concatNormalized(
   if (canCopy) {
     log.info('concat: using fast path (stream copy)');
     const listTxt = await outPath('.txt');
-    const content = clips.map(c => `file '${c.replace(/'/g, "'\\''")}'`).join('\n');
+    const localClips = await Promise.all(clips.map(async (c, i) => {
+      if (c.startsWith('http')) {
+        const dest = await outPath(`.clip${i}.mp4`);
+        const res = await fetch(c);
+        if (!res.ok) throw new Error(`Failed to download ${c}`);
+        const arr = await res.arrayBuffer();
+        await require('node:fs/promises').writeFile(dest, Buffer.from(arr));
+        return dest;
+      }
+      return c;
+    }));
+    const content = localClips.map(c => `file '${c.replace(/'/g, "'\\''")}'`).join('\n');
     await require('node:fs/promises').writeFile(listTxt, content);
     
     const cmd = Ffmpeg()
       .input(listTxt)
-      .inputOptions(['-f', 'concat', '-safe', '0', '-protocol_whitelist', 'file,http,https,tcp,tls'])
+      .inputOptions(['-f', 'concat', '-safe', '0'])
       .outputOptions(['-c', 'copy']);
     return run(cmd, out);
   }
