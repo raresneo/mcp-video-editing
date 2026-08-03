@@ -129,8 +129,30 @@ export const TOOLS = [
     },
   },
   {
-    name: 'test_grep',
-    description: 'Temporary tool to run grep drawtext.',
-    inputSchema: { type: 'object', properties: {} },
+    name: 'generate_music',
+    description: 'Generează o piesă audio de fundal folosind Google Lyria 3 Pro. Returnează job_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'Descrierea piesei' },
+        duration_s: { type: 'number', description: 'Durata în secunde. Default 30.' },
+        brand: { type: 'string', description: 'fya | neoboost | bmh | fia' },
+        mood: { type: 'string', description: 'ambient | ritmic | energic | calm' },
+        has_build: { type: 'boolean', description: 'Dacă are crescendo la final (reveal)' },
+        idempotency_key: { type: 'string' }
+      },
+      required: ['prompt']
+    }
+  },
+  {
+    name: 'list_audio_library',
+    description: 'Returnează piesele audio salvate în library.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        brand: { type: 'string' },
+        mood: { type: 'string' }
+      }
+    }
   }
 ];

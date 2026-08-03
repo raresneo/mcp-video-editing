@@ -15,6 +15,10 @@ services:
         value: media-out
       - key: CRON_SECRET
         value: super-parola-mea-123
+      - key: GOOGLE_CLOUD_PROJECT
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        sync: false
       - key: PORT
         value: 10000
       - key: MAX_DOWNLOAD_BYTES

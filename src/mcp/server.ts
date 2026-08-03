@@ -10,7 +10,8 @@ import {
   drawCaptions, normalizeVideoForPlatform,
 } from '../media/ffmpeg.js';
 import { normalizeImage, textOverlayImage } from '../media/image.js';
-import { execSync } from 'node:child_process';
+import { generateMusicLyria } from '../media/lyria.js';
+import { supabase } from '../supabase.js';
 
 // ---- Handlerele efective (rulează în background prin jobs.enqueue) ----
 
@@ -131,19 +132,55 @@ async function hOverlay(input: any) {
   } finally { await cleanup(tmp); }
 }
 
+async function enqueueMusic(name: string, input: any, key: string | null): Promise<any> {
+  const { data, error } = await supabase.from('video_jobs').insert({
+    tool: name, input, idempotency_key: key
+  }).select('id').single();
+  if (error || !data) throw new Error(`DB init job fail: ${error?.message}`);
+  const jobId = data.id;
+
+  // Run in background
+  (async () => {
+    try {
+      await supabase.from('video_jobs').update({ status: 'processing' }).eq('id', jobId);
+      const { prompt, duration_s = 30, brand, mood, has_build } = input;
+      log.info(`generate_music => prompt: ${prompt}`);
+      const url = await generateMusicLyria(prompt, duration_s, brand, mood, has_build);
+      await supabase.from('video_jobs').update({ status: 'completed', output_url: url }).eq('id', jobId);
+    } catch (e: any) {
+      log.error('Job error', e.message);
+      await supabase.from('video_jobs').update({ status: 'failed', error: e.message }).eq('id', jobId);
+    }
+  })();
+  return { content: [{ type: 'text', text: jobId }] };
+}
+
+async function hListAudioLibrary(args: any): Promise<any> {
+  const { brand, mood } = args;
+  let q = supabase.from('audio_library').select('*').order('created_at', { ascending: false });
+  if (brand) q = q.eq('brand', brand);
+  if (mood) q = q.eq('mood', mood);
+  
+  const { data, error } = await q;
+  if (error) throw new Error(`DB Error: ${error.message}`);
+  
+  return {
+    content: [{ type: 'text', text: JSON.stringify(data, null, 2) }]
+  };
+}
+
 // Mapare tool -> handler async (toate întorc job_id, mai puțin get_job_status care e sincron).
 export async function runTool(name: string, args: any): Promise<any> {
-  if (name === 'test_grep') {
-    return { output: execSync('/usr/bin/ffmpeg -filters | grep drawtext').toString() };
-  }
   const key = args?.idempotency_key ?? null;
   switch (name) {
     case 'concat_clips': return enqueue(name, args, key, hConcat);
     case 'add_audio': return enqueue(name, args, key, hAddAudio);
-    case 'normalize_for_platform': return enqueue(name, args, key, hNormalize);
-    case 'trim_clip': return enqueue(name, args, key, hTrim);
     case 'add_captions': return enqueue(name, args, key, hCaptions);
+    case 'trim_video': return enqueue(name, args, key, hTrim);
+    case 'normalize_platform': return enqueue(name, args, key, hNormalize);
     case 'add_text_overlay_image': return enqueue(name, args, key, hOverlay);
+    case 'generate_music': return enqueueMusic(name, args, key);
+    case 'list_audio_library': return hListAudioLibrary(args);
     case 'get_job_status': {
       const job = await getJob(args.job_id);
       if (!job) throw new Error(`job inexistent: ${args.job_id}`);
