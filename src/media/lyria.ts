@@ -15,11 +15,13 @@ export async function generateMusicLyria(
   if (process.env.GOOGLE_CREDENTIALS_JSON) {
     const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
     client = new GoogleGenAI({ 
-      vertexai: { project: projectId, location: 'us-central1' },
+      project: projectId, 
+      location: 'us-central1',
+      vertexai: true,
       credentials: { client_email: creds.client_email, private_key: creds.private_key } 
     });
   } else {
-    client = new GoogleGenAI({ vertexai: { project: projectId, location: 'us-central1' } });
+    client = new GoogleGenAI({ project: projectId, location: 'us-central1', vertexai: true });
   }
   const modelId = duration_s <= 30 ? 'lyria-3-clip-preview' : 'lyria-3-pro-preview';
   
