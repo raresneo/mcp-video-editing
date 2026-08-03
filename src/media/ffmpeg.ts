@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import { FONT_BOLD, TMP_DIR } from '../config.js';
 import { log } from '../logger.js';
 
-if (ffmpegPath) Ffmpeg.setFfmpegPath(ffmpegPath as unknown as string);
-// ffprobe din PATH (instalat via apt în Docker):
+// Folosim executabilele din sistem (instalate via apt în Docker)
+// pentru că ffmpeg-static nu are suport pentru libfreetype (drawtext).
+Ffmpeg.setFfmpegPath('/usr/bin/ffmpeg');
 Ffmpeg.setFfprobePath('/usr/bin/ffprobe');
 
 export interface Probe {

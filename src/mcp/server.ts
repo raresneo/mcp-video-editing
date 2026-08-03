@@ -33,6 +33,8 @@ async function hConcat(input: any) {
     
     const transition = input.transition ?? 'none';
     const canCopy = transition === 'none' && probes.length > 1 && probes.every((p, i, arr) => {
+      // Must match exactly the requested w, h, fps
+      if (p.width !== w || p.height !== h || String(p.fps) !== String(fps)) return false;
       if (i === 0) return true;
       return p.videoCodec === arr[0].videoCodec &&
              p.audioCodec === arr[0].audioCodec &&
