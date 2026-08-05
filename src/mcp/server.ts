@@ -8,14 +8,15 @@ import { log } from '../logger.js';
 import {
   normalizeVideo, concatNormalized, mixAudio, trim,
   drawCaptions, normalizeVideoForPlatform,
+  probe, extractAudio, writeAssFile, burnAss,
 } from '../media/ffmpeg.js';
 import { normalizeImage, textOverlayImage } from '../media/image.js';
 import { generateMusicLyria } from '../media/lyria.js';
+import { transcribeWords, groupWords, writeJsonFile } from '../media/transcribe.js';
+import { buildAss } from '../media/subtitles.js';
 import { supabase } from '../supabase.js';
 
 // ---- Handlerele efective (rulează în background prin jobs.enqueue) ----
-
-import { probe } from '../media/ffmpeg.js';
 
 async function hConcat(input: any) {
   const tmp: string[] = [];
@@ -121,6 +122,62 @@ async function hCaptions(input: any) {
   } finally { await cleanup(tmp); }
 }
 
+// Auto-caption cap-coadă: audio -> transcriere cu timestamps -> linii scurte ->
+// ASS -> burn-in într-un singur filtru.
+async function hAutoCaption(input: any) {
+  const tmp: string[] = [];
+  try {
+    const dl = await downloadToTmp(input.video_url);
+    tmp.push(dl.path);
+    if (dl.kind !== 'video') throw new Error('auto_caption acceptă doar video');
+
+    const audio = await extractAudio(dl.path);
+    tmp.push(audio);
+
+    const { words, provider } = await transcribeWords(audio, input.language);
+    if (!words.length) throw new Error('Transcrierea nu a returnat niciun cuvânt.');
+
+    const captions = groupWords(words, {
+      maxWords: input.max_words_per_line,
+      maxChars: input.max_chars_per_line,
+    });
+    if (!captions.length) throw new Error('Nu am putut construi nicio linie de subtitrare.');
+
+    const transcript = words.map((w) => w.text).join(' ');
+    log.info('auto_caption', JSON.stringify({ provider, words: words.length, lines: captions.length }));
+
+    // dry_run: nu randăm nimic, întoarcem transcriptul ca să poți corecta textul.
+    if (input.dry_run) {
+      const jsonPath = await writeJsonFile({ provider, transcript, segments: captions });
+      return {
+        localPath: jsonPath,
+        contentType: 'application/json',
+        meta: { provider, dry_run: true, words: words.length, lines: captions.length, transcript, captions },
+      };
+    }
+
+    const p = await probe(dl.path);
+    const ass = buildAss(captions, p.width, p.height, {
+      font_size: input.font_size,
+      color: input.color,
+      highlight_color: input.highlight_color,
+      highlight_words: input.highlight_words,
+      position: input.position,
+      uppercase: input.uppercase !== false,
+    });
+
+    const assPath = await writeAssFile(ass);
+    tmp.push(assPath);
+
+    const out = await burnAss(dl.path, assPath);
+    return {
+      localPath: out,
+      contentType: 'video/mp4',
+      meta: { provider, words: words.length, lines: captions.length, transcript, captions },
+    };
+  } finally { await cleanup(tmp); }
+}
+
 async function hOverlay(input: any) {
   const tmp: string[] = [];
   try {
@@ -170,13 +227,17 @@ async function hListAudioLibrary(args: any): Promise<any> {
 }
 
 // Mapare tool -> handler async (toate întorc job_id, mai puțin get_job_status care e sincron).
+// Numele din TOOLS sunt sursa de adevăr; aliasurile vechi rămân pentru compatibilitate.
 export async function runTool(name: string, args: any): Promise<any> {
   const key = args?.idempotency_key ?? null;
   switch (name) {
     case 'concat_clips': return enqueue(name, args, key, hConcat);
     case 'add_audio': return enqueue(name, args, key, hAddAudio);
     case 'add_captions': return enqueue(name, args, key, hCaptions);
+    case 'auto_caption': return enqueue(name, args, key, hAutoCaption);
+    case 'trim_clip':
     case 'trim_video': return enqueue(name, args, key, hTrim);
+    case 'normalize_for_platform':
     case 'normalize_platform': return enqueue(name, args, key, hNormalize);
     case 'add_text_overlay_image': return enqueue(name, args, key, hOverlay);
     case 'generate_music': return enqueueMusic(name, args, key);
@@ -202,7 +263,7 @@ export async function handleRpc(body: any): Promise<any> {
         return reply({
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: 'mcp-video-editing', version: '1.0.0' },
+          serverInfo: { name: 'mcp-video-editing', version: '1.1.0' },
         });
       case 'tools/list':
         return reply({ tools: TOOLS });
