@@ -20,7 +20,7 @@ Sandbox-urile AI n-au internet și nu pot procesa clipuri din Higgsfield/Drive. 
 1. Push repo pe GitHub.
 2. New > Blueprint > selectează repo (citește render.yaml).
 3. Setează env secrets: SUPABASE_URL, SUPABASE_SERVICE_KEY, CRON_SECRET, OPENAI_API_KEY (opțional).
-Dacă `OPENAI_API_KEY` lipsește sau eșuează, aplicația va folosi ca fallback Gemini prin Vertex AI (necesită variabilele standard GCP: `GOOGLE_CLOUD_PROJECT`, `GOOGLE_APPLICATION_CREDENTIALS` sau `GOOGLE_CREDENTIALS_JSON`).
+Dacă `OPENAI_API_KEY` lipsește sau eșuează, aplicația va folosi ca fallback Gemini prin Vertex AI (necesită variabilele: `GOOGLE_CLOUD_PROJECT` și `GOOGLE_CREDENTIALS_JSON` care conține tot JSON-ul de service account). Codul scrie automat acest JSON pe disc și folosește temporar `GOOGLE_APPLICATION_CREDENTIALS` intern pentru autorizare.
 4. Deploy. Health check: `GET /health`.
 
 ## Endpoint MCP

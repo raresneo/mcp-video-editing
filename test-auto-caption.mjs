@@ -36,9 +36,29 @@ async function main() {
     idempotency_key: `dryrun-${Date.now()}`
   });
   
-  console.log('Rezultat Dry Run:');
-  console.log(dryRunOut.content[0].text);
-
+  const parsedDry = JSON.parse(dryRunOut.content[0].text);
+  const dryJobId = typeof parsedDry === 'string' ? parsedDry : parsedDry.job_id;
+  
+  if (!dryJobId) throw new Error('Nu s-a returnat job_id valid pentru dry_run');
+  
+  process.stdout.write(`⏳ Aștept dry_run job ${dryJobId}`);
+  for (let i = 0; i < 120; i++) {
+    await new Promise(r => setTimeout(r, 5000));
+    process.stdout.write('.');
+    
+    const statusOut = await callTool('get_job_status', { job_id: dryJobId });
+    const state = JSON.parse(statusOut.content[0].text);
+    
+    if (state.status === 'completed') {
+      console.log('\n✅ SUCCES dry_run. Transcript meta:');
+      console.log(JSON.stringify(state.meta, null, 2));
+      break;
+    }
+    if (state.status === 'failed') {
+      console.log(`\n❌ FAIL dry_run: ${state.error}`);
+      return;
+    }
+  }
   console.log('\n[2] Apel auto_caption complet (randare)...');
   const fullCall = await callTool('auto_caption', {
     video_url: TEST_CLIP,
