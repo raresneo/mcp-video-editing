@@ -9,6 +9,9 @@ const schema = z.object({
   MAX_DOWNLOAD_BYTES: z.coerce.number().default(209_715_200),
   JOB_TIMEOUT_MS: z.coerce.number().default(300_000),
   SIGNED_URL_TTL_S: z.coerce.number().default(604_800),
+  // Opțional: dacă există, auto_caption folosește Whisper (timestamps word-level).
+  // Dacă lipsește, cade automat pe Gemini prin Vertex AI.
+  OPENAI_API_KEY: z.string().optional(),
 });
 
 const parsed = schema.safeParse(process.env);

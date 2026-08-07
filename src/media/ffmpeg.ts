@@ -316,3 +316,51 @@ export async function normalizeVideoForPlatform(
     .outputOptions(getOutputOptions(Math.min(60, p.duration)));
   return { path: await run(cmd, out), passthrough: false };
 }
+
+// Extrage DOAR pista audio: mono 16kHz mp3 64k. Mic (intră sub limita de 25MB
+// a Whisper pentru clipuri lungi) și exact formatul care place transcrierii.
+export async function extractAudio(input: string): Promise<string> {
+  const p = await probe(input);
+  if (!p.hasAudio) {
+    throw new Error('Clipul nu are pistă audio, deci nu există nimic de transcris.');
+  }
+  const out = await outPath('.mp3');
+  const cmd = Ffmpeg(input)
+    .noVideo()
+    .audioCodec('libmp3lame')
+    .audioChannels(1)
+    .audioFrequency(16000)
+    .audioBitrate('64k');
+  return run(cmd, out);
+}
+
+// Scrie fișierul ASS temporar folosit de burnAss.
+export async function writeAssFile(content: string): Promise<string> {
+  const path = await outPath('.ass');
+  await writeFile(path, content, 'utf8');
+  return path;
+}
+
+// Burn-in subtitrări dintr-un fișier ASS: UN singur filtru, indiferent câte
+// segmente sunt. Varianta cu N filtre drawtext înlănțuite (drawCaptions) devine
+// foarte scumpă peste ~20 de segmente. Audio-ul e copiat, nu re-encodat.
+export async function burnAss(input: string, assPath: string): Promise<string> {
+  const p = await probe(input);
+  const out = await outPath('.mp4');
+
+  // Calea intră într-un filtergraph: escapăm backslash, virgulă, doi puncte, apostrof.
+  const safe = assPath
+    .replace(/\\/g, '\\\\')
+    .replace(/:/g, '\\:')
+    .replace(/'/g, "\\'");
+
+  const cmd = Ffmpeg(input)
+    .videoFilters(`ass='${safe}'`)
+    .videoCodec('libx264')
+    .outputOptions(getOutputOptions(p.duration));
+
+  if (p.hasAudio) cmd.audioCodec('copy');
+  else cmd.noAudio();
+
+  return run(cmd, out);
+}

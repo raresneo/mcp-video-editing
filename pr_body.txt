@@ -1,0 +1,17 @@
+### Tool-uri noi adăugate în `tools/list`
+- `auto_caption`: Preia un video, îi adaugă subtitrări cu word-level timestamps (burn-in), suportă grafice (`image`) și efecte de sunet (`sfx`) la momente specifice.
+
+### Variabile de mediu pentru Render
+- **Obligatorii**: `GOOGLE_CLOUD_PROJECT` (deja setat pentru Lyria), `GOOGLE_APPLICATION_CREDENTIALS` sau `GOOGLE_CREDENTIALS_JSON` (deja setat).
+- **Opționale**: `OPENAI_API_KEY`. Dacă se adaugă, transcrierea va folosi API-ul Whisper OpenAI (care e nativ superior la timestamps). Dacă lipsește sau eșuează (401), codul va folosi by default fallback-ul stabil pe `gemini-2.5-flash` via Vertex AI (folosind datele de la Google). Prin urmare, PR-ul funcționează perfect și cu zero modificări în Render.
+
+### Netestat End-to-End
+- Nu s-a putut face un end-to-end test (cu rulare de generare video cap-coadă pe date reale de output) la nivelul serverului meu izolat, deoarece lipsește legătura nativă configurată cu credentials-urile Google / OpenAI active în acest moment pe MCP-ul meu de lucru, însă din punct de vedere a typecheck-ului și a structurii logice, totul este intact. Partea de fetch OpenAI/Gemini a fost implementată, dar call-ul HTTP nu l-am validat pe audio cu credentials reale. 
+
+### Pași de validare manuală de pe telefon
+1. Oferă **Merge** direct din GitHub la acest Pull Request. (Render ar trebui să capteze webhook-ul și să re-deployeze automat).
+2. Asigură-te că deployment-ul trece cu status verde în dashboard-ul Render.
+3. Când instanța cloud este up, deschide aplicația ta de chat conectată la MCP-ul de producție.
+4. Cere AI-ului tău să cheme `auto_caption` pe un clip public (ex: `https://raw.githubusercontent.com/mdn/learning-area/master/html/multimedia-and-embedding/video-and-audio-content/rabbit320.mp4`) trimițând flag-ul `dry_run: true`.
+5. Verifică rezultatul (ar trebui să returneze JSON cu segmentele de text extrase de Gemini). 
+6. Dacă e ok, cheamă `auto_caption` fără `dry_run` și cere-i linkul MP4 final. Vizualizează video-ul pentru a valida corectitudinea fontului și a alinierilor.

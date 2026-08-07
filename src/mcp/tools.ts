@@ -71,7 +71,7 @@ export const TOOLS = [
   },
   {
     name: 'add_captions',
-    description: 'Burn-in text pe video (drawtext), diacritice RO. Stil brand: alb + cuvinte highlighted, sans bold. Returnează job_id.',
+    description: 'Burn-in text pe video (drawtext), diacritice RO. Stil brand: alb + cuvinte highlighted, sans bold. Primește segmentele gata făcute; pentru transcriere automată folosește auto_caption. Returnează job_id.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -92,6 +92,36 @@ export const TOOLS = [
         idempotency_key: { type: 'string' },
       },
       required: ['video_url', 'captions'],
+    },
+  },
+  {
+    name: 'auto_caption',
+    description: 'Auto-caption complet într-un singur apel: extrage pista audio, o transcrie cu timestamps (Whisper word-level dacă există OPENAI_API_KEY, altfel Gemini) și arde subtitrările pe video în stil brand, cu diacritice RO. Acceptă și linkuri de share Google Drive. meta conține transcriptul și segmentele folosite. Returnează job_id (poll get_job_status).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        video_url: { type: 'string' },
+        language: { type: 'string', description: 'ISO 639-1, ex "ro". Omis => auto-detect.' },
+        max_words_per_line: { type: 'number', default: 4 },
+        max_chars_per_line: { type: 'number', default: 28 },
+        uppercase: { type: 'boolean', default: true },
+        position: { type: 'string', enum: ['bottom', 'center', 'top'], default: 'bottom' },
+        font_size: { type: 'number', description: 'Px. Default ~4.5% din înălțimea video.' },
+        color: { type: 'string', default: '#FFFFFF' },
+        highlight_color: { type: 'string', default: '#D4AF37' },
+        highlight_words: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Cuvinte colorate cu highlight_color.',
+        },
+        dry_run: {
+          type: 'boolean',
+          default: false,
+          description: 'Nu randează: întoarce doar transcriptul + segmentele ca JSON, ca să poți corecta textul înainte.',
+        },
+        idempotency_key: { type: 'string' },
+      },
+      required: ['video_url'],
     },
   },
   {
