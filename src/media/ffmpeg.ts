@@ -183,6 +183,8 @@ export async function concatNormalized(
   return out;
 }
 
+const AFMT = 'aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo';
+
 // Muzică de fundal + SFX la timpi exacți peste audio-ul original.
 export async function mixAudio(
   video: string,
@@ -192,6 +194,7 @@ export async function mixAudio(
   duck: boolean,
 ): Promise<string> {
   const out = await outPath('.mp4');
+  const p = await probe(video);
   const cmd = Ffmpeg(video);
   let idx = 1;
 
@@ -204,35 +207,51 @@ export async function mixAudio(
   const filters: string[] = [];
   const mixLabels: string[] = [];
 
+  // Baza de mix. Dacă videoul n-are pistă audio, [0:a] nu există:
+  // generăm liniște pe durata clipului, altfel ffmpeg crapă.
+  if (p.hasAudio) {
+    filters.push(`[0:a]${AFMT}[abase]`);
+  } else {
+    const d = Math.max(0.1, p.duration || 0.1).toFixed(3);
+    filters.push(`anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration=${d}[abase]`);
+  }
+
   if (music && duck) {
-    // [0:a] nu poate fi refolosit în filtergraph: îl spargem cu asplit.
+    // [abase] nu poate fi refolosit în filtergraph: îl spargem cu asplit.
     // O copie intră în mix, cealaltă e sidechain key pentru duck.
-    filters.push(`[0:a]asplit=2[a0mix][a0key]`);
+    filters.push(`[abase]asplit=2[a0mix][a0key]`);
     mixLabels.push('[a0mix]');
-    filters.push(`[${musicIdx}:a]aloop=loop=-1:size=2e9,volume=${musicVolume}[mus]`);
+    filters.push(`[${musicIdx}:a]${AFMT},aloop=loop=-1:size=2e9,volume=${musicVolume}[mus]`);
     filters.push(`[mus][a0key]sidechaincompress=threshold=0.05:ratio=8:attack=5:release=250[musd]`);
     mixLabels.push('[musd]');
   } else {
-    mixLabels.push('[0:a]');
+    mixLabels.push('[abase]');
     if (music) {
-      filters.push(`[${musicIdx}:a]aloop=loop=-1:size=2e9,volume=${musicVolume}[mus]`);
+      filters.push(`[${musicIdx}:a]${AFMT},aloop=loop=-1:size=2e9,volume=${musicVolume}[mus]`);
       mixLabels.push('[mus]');
     }
   }
 
   sfx.forEach((s, k) => {
     const ms = Math.round(s.at * 1000);
-    filters.push(`[${sfxIdx[k]}:a]adelay=${ms}|${ms}[sfx${k}]`);
+    filters.push(`[${sfxIdx[k]}:a]${AFMT},adelay=${ms}|${ms}[sfx${k}]`);
     mixLabels.push(`[sfx${k}]`);
   });
 
   const n = mixLabels.length;
-  filters.push(`${mixLabels.join('')}amix=inputs=${n}:duration=first:dropout_transition=0[aout]`);
+  // normalize=0: altfel amix împarte volumul fiecărui input la n
+  // și music_volume cerut nu mai înseamnă nimic.
+  filters.push(
+    `${mixLabels.join('')}amix=inputs=${n}:duration=first:dropout_transition=0:normalize=0[aout]`,
+  );
 
-  cmd.complexFilter(filters, ['aout']);
+  // ATENȚIE: nu pasăm output labels la complexFilter. fluent-ffmpeg ar adăuga
+  // singur -map [aout], iar noi îl avem deja explicit mai jos => label folosit
+  // de două ori și ffmpeg refuză filtergraph-ul.
+  cmd.complexFilter(filters);
   cmd.outputOptions([
     '-map', '0:v', '-map', '[aout]',
-    '-c:v', 'copy', '-c:a', 'aac', '-shortest', '-movflags', '+faststart',
+    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart',
   ]);
 
   return run(cmd, out);
@@ -259,30 +278,66 @@ function esc(text: string): string {
     .replace(/%/g, '\\%');
 }
 
+// Rupe textul în linii care intră în lățimea cadrului.
+// Lățimea medie a unui caracter la font bold ≈ 0.55 * fontsize.
+function wrapText(text: string, fontsize: number, frameW: number): string[] {
+  const usable = frameW * 0.9;
+  const maxChars = Math.max(8, Math.floor(usable / (fontsize * 0.55)));
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = '';
+  for (const w of words) {
+    const candidate = current ? `${current} ${w}` : w;
+    if (candidate.length > maxChars && current) {
+      lines.push(current);
+      current = w;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.length ? lines : [text];
+}
+
 // Burn-in captions. Fiecare caption apare între start_s și end_s.
-// style: { color, highlight } — highlight = box color (cuvinte evidențiate).
+// style: { color, highlight_color, font_size } — highlight = box color.
 export async function drawCaptions(
   input: string,
   captions: { text: string; start: number; end: number; style?: any }[],
 ): Promise<string> {
   const out = await outPath('.mp4');
-  const filters = captions.map((c) => {
+  const p = await probe(input);
+  const frameW = p.width || 1080;
+
+  const filters: string[] = [];
+
+  for (const c of captions) {
     const color = c.style?.color ?? 'white';
     const box = c.style?.highlight_color ?? c.style?.highlight;
-    const fontsize = c.style?.font_size ?? 54;
+    // font_size e dat pentru un cadru de referință de 1080px lățime;
+    // scalăm ca textul să arate la fel pe 720p sau 1080p.
+    const requested = c.style?.font_size ?? 54;
+    const fontsize = Math.max(14, Math.round(requested * (frameW / 1080)));
     const boxPart = box
       ? `:box=1:boxcolor=${box}@0.9:boxborderw=18`
-      : `:borderw=3:bordercolor=black@0.8`;
+      : `:borderw=${Math.max(2, Math.round(fontsize / 12))}:bordercolor=black@0.85:shadowcolor=black@0.6:shadowx=2:shadowy=2`;
 
-    return (
-      `drawtext=fontfile=${FONT_BOLD}:text='${esc(c.text)}':` +
-      `fontsize=${fontsize}:fontcolor=${color}:` +
-      `x=(w-text_w)/2:y=h-h/4${boxPart}:` +
-      `enable='between(t,${c.start},${c.end})'`
-    );
-  });
+    const lines = wrapText(c.text, fontsize, frameW);
+    const lineH = Math.round(fontsize * 1.35);
 
-  const p = await probe(input);
+    lines.forEach((line, i) => {
+      // Bloc centrat pe același baseline ca înainte (h - h/4).
+      const offset = Math.round(i * lineH - ((lines.length - 1) * lineH) / 2);
+      const sign = offset >= 0 ? '+' : '-';
+      filters.push(
+        `drawtext=fontfile=${FONT_BOLD}:text='${esc(line)}':` +
+        `fontsize=${fontsize}:fontcolor=${color}:` +
+        `x=(w-text_w)/2:y=h-h/4${sign}${Math.abs(offset)}${boxPart}:` +
+        `enable='between(t,${c.start},${c.end})'`,
+      );
+    });
+  }
+
   const cmd = Ffmpeg(input)
     .videoFilters(filters)
     .videoCodec('libx264')
