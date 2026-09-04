@@ -185,14 +185,21 @@ export async function concatNormalized(
 
 const AFMT = 'aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo';
 
+export interface MixOptions {
+  musicVolume: number;
+  duck: boolean;
+  // true => sunetul original al clipului nu intră în mix (zero sunet diegetic).
+  muteOriginal?: boolean;
+}
+
 // Muzică de fundal + SFX la timpi exacți peste audio-ul original.
 export async function mixAudio(
   video: string,
   music: string | null,
   sfx: { path: string; at: number }[],
-  musicVolume: number,
-  duck: boolean,
+  opts: MixOptions,
 ): Promise<string> {
+  const { musicVolume, muteOriginal = false } = opts;
   const out = await outPath('.mp4');
   const p = await probe(video);
   const cmd = Ffmpeg(video);
@@ -207,14 +214,19 @@ export async function mixAudio(
   const filters: string[] = [];
   const mixLabels: string[] = [];
 
-  // Baza de mix. Dacă videoul n-are pistă audio, [0:a] nu există:
-  // generăm liniște pe durata clipului, altfel ffmpeg crapă.
-  if (p.hasAudio) {
-    filters.push(`[0:a]${AFMT}[abase]`);
-  } else {
+  // Baza de mix. Silence când clipul n-are pistă audio SAU când o mutăm
+  // intenționat; altfel [0:a] nu există / se aude peste muzică.
+  const useSilentBase = muteOriginal || !p.hasAudio;
+  if (useSilentBase) {
     const d = Math.max(0.1, p.duration || 0.1).toFixed(3);
     filters.push(`anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration=${d}[abase]`);
+  } else {
+    filters.push(`[0:a]${AFMT}[abase]`);
   }
+
+  // Duck-ul comprimă muzica după sunetul original: fără sunet original n-are sens.
+  const duck = opts.duck && !useSilentBase;
+  if (opts.duck && !duck) log.info('mixAudio: duck ignorat (baza de mix e silence)');
 
   if (music && duck) {
     // [abase] nu poate fi refolosit în filtergraph: îl spargem cu asplit.
