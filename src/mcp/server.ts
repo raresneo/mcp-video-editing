@@ -77,8 +77,19 @@ async function hAddAudio(input: any) {
       sfx.push({ path: d.path, at: s.at_seconds });
     }
     
-    const out = await mixAudio(v.path, music, sfx, input.music_volume ?? 0.6, Boolean(input.duck));
-    return { localPath: out, contentType: 'video/mp4', meta: { music: Boolean(music), sfx: sfx.length } };
+    // Standard de brand: patul muzical înlocuiește sunetul clipului, nu se adună cu el.
+    const muteOriginal = input.mute_original ?? true;
+
+    const out = await mixAudio(v.path, music, sfx, {
+      musicVolume: input.music_volume ?? 0.6,
+      duck: Boolean(input.duck),
+      muteOriginal,
+    });
+    return {
+      localPath: out,
+      contentType: 'video/mp4',
+      meta: { music: Boolean(music), sfx: sfx.length, muteOriginal },
+    };
   } finally { await cleanup(tmp); }
 }
 
