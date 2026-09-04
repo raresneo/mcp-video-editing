@@ -21,6 +21,26 @@ const EXT_BY_CT: Record<string, string> = {
   'video/mp4': '.mp4',
   'video/quicktime': '.mov',
   'video/webm': '.webm',
+  'audio/mpeg': '.mp3',
+  'audio/mp3': '.mp3',
+  'audio/wav': '.wav',
+  'audio/wave': '.wav',
+  'audio/x-wav': '.wav',
+  'audio/vnd.wave': '.wav',
+  'audio/mp4': '.m4a',
+  'audio/x-m4a': '.m4a',
+  'audio/aac': '.aac',
+  'audio/ogg': '.ogg',
+  'application/ogg': '.ogg',
+  'audio/opus': '.opus',
+  'audio/flac': '.flac',
+  'audio/x-flac': '.flac',
+};
+
+const EXT_BY_KIND: Record<MediaKind, string> = {
+  image: '.img',
+  video: '.mp4',
+  audio: '.audio',
 };
 
 export async function downloadToTmp(url: string): Promise<Downloaded> {
@@ -28,7 +48,7 @@ export async function downloadToTmp(url: string): Promise<Downloaded> {
   if (!res.ok || !res.body) throw new Error(`download ${res.status} pentru ${url}`);
 
   const contentType = (res.headers.get('content-type') ?? '').split(';')[0]!.trim();
-  // detectKind validează image/* sau video/* (content-type sau extensie); aruncă altfel.
+  // detectKind validează image/*, video/* sau audio/* (content-type sau extensie); aruncă altfel.
   const kind = detectKind(contentType, url);
 
   const declared = Number(res.headers.get('content-length') ?? '0');
@@ -37,7 +57,9 @@ export async function downloadToTmp(url: string): Promise<Downloaded> {
   }
 
   const dir = await mkdtemp(join(TMP_DIR, 'src-'));
-  const ext = EXT_BY_CT[contentType] ?? (kind === 'image' ? '.img' : '.mp4');
+  // Preferăm extensia din URL când content-type-ul nu e în tabel (CDN-uri generice).
+  const urlExt = (url.split('?')[0]?.match(/\.[a-z0-9]{2,5}$/i)?.[0] ?? '').toLowerCase();
+  const ext = EXT_BY_CT[contentType.toLowerCase()] ?? (urlExt || EXT_BY_KIND[kind]);
   const path = join(dir, `in${ext}`);
 
   // Stream cu enforce hard-limit pe bytes reali.
