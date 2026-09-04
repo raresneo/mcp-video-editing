@@ -69,6 +69,23 @@ export async function getJob(id: string): Promise<Job | null> {
   return (data as Job) ?? null;
 }
 
+// Adaugă ?download=<nume> ca browserul să salveze fișierul în loc să încerce
+// să-l streameze (și ca numele descărcat să fie citibil, nu "out.mp4").
+function withDownload(url: string, filename: string): string {
+  try {
+    const u = new URL(url);
+    u.searchParams.set('download', filename);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+async function isBucketPublic(): Promise<boolean> {
+  const { data } = await supabase.storage.listBuckets();
+  return Boolean(data?.find((b) => b.name === config.SUPABASE_BUCKET)?.public);
+}
+
 export async function uploadOutput(localPath: string, contentType: string): Promise<string> {
   const key = `${Date.now()}-${basename(localPath)}`;
   const stream = createReadStream(localPath);
@@ -77,16 +94,23 @@ export async function uploadOutput(localPath: string, contentType: string): Prom
     .upload(key, stream, { contentType, upsert: false, duplex: 'half' });
   
   if (error) throw new Error(`upload failed: ${error.message}`);
-  
+
+  // Bucket public => link scurt, stabil, fără token care expiră sau se rupe la paste.
+  if (await isBucketPublic()) {
+    const publicUrl = supabase.storage.from(config.SUPABASE_BUCKET).getPublicUrl(key).data.publicUrl;
+    return withDownload(publicUrl, key);
+  }
+
   if (config.SIGNED_URL_TTL_S > 0) {
     const { data, error: sErr } = await supabase.storage
       .from(config.SUPABASE_BUCKET)
       .createSignedUrl(key, config.SIGNED_URL_TTL_S);
     if (sErr) throw new Error(`signed url failed: ${sErr.message}`);
-    return data.signedUrl;
+    return withDownload(data.signedUrl, key);
   }
   
-  return supabase.storage.from(config.SUPABASE_BUCKET).getPublicUrl(key).data.publicUrl;
+  const publicUrl = supabase.storage.from(config.SUPABASE_BUCKET).getPublicUrl(key).data.publicUrl;
+  return withDownload(publicUrl, key);
 }
 
 export async function recoverStuckJobs(): Promise<void> {
