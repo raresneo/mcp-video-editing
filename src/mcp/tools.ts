@@ -21,7 +21,7 @@ export const TOOLS = [
   },
   {
     name: 'add_audio',
-    description: 'Mixează muzică de fundal + SFX (whoosh) la timpi exacți peste video. Returnează job_id.',
+    description: 'Mixează muzică de fundal + SFX (whoosh) la timpi exacți peste video. Implicit sunetul original al clipului e mutat (standard de brand: zero sunet diegetic) — trimite mute_original=false dacă vrei și sunetul original în mix. Acceptă mp3/wav/m4a/aac/ogg/flac. Returnează job_id.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -36,7 +36,8 @@ export const TOOLS = [
           },
         },
         music_volume: { type: 'number', default: 0.6 },
-        duck: { type: 'boolean', default: false },
+        duck: { type: 'boolean', default: false, description: 'Comprimă muzica sub sunetul original. Ignorat când mute_original=true.' },
+        mute_original: { type: 'boolean', default: true, description: 'true = se aude doar muzica/SFX; false = muzica se adaugă peste sunetul clipului.' },
         idempotency_key: { type: 'string' },
       },
       required: ['video_url'],
@@ -71,7 +72,7 @@ export const TOOLS = [
   },
   {
     name: 'add_captions',
-    description: 'Burn-in text pe video (drawtext), diacritice RO. Stil brand: alb + cuvinte highlighted, sans bold. Returnează job_id.',
+    description: 'Burn-in text pe video (drawtext), diacritice RO. Stil brand: alb + cuvinte highlighted, sans bold. Textul lung se rupe automat pe mai multe linii. Returnează job_id.',
     inputSchema: {
       type: 'object',
       properties: {
