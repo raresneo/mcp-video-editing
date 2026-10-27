@@ -1,15 +1,18 @@
 import { createWriteStream } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { lookup as dnsLookup } from 'node:dns/promises';
+import * as http from 'node:http';
+import * as https from 'node:https';
 import { isIP } from 'node:net';
 import { join } from 'node:path';
-import { Readable } from 'node:stream';
+import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 // Descărcare sigură pentru URL-uri furnizate de utilizator (SSRF guard).
-// Permis: doar http/https, porturi standard, fără credențiale, doar adrese publice
-// (inclusiv adresele rezolvate prin DNS), fiecare redirect revalidat, limită de redirecturi.
-// Limitare cunoscută: conexiunea nu e fixată pe IP-ul validat (rebinding DNS rămâne un risc rezidual).
+// Fiecare hop: DNS o singură dată, toate adresele trebuie publice, apoi conexiunea
+// e FIXATĂ pe prima adresă validată (lookup personalizat în request). Nu există a doua
+// rezoluție DNS. TLS folosește hostname-ul original (SNI și verificare certificat).
+// Redirecturile sunt tratate manual: fiecare țintă e revalidată și fixată separat.
 
 export const MAX_REDIRECTS = 3;
 export const DEFAULT_MAX_BYTES = 209_715_200;
@@ -22,8 +25,47 @@ export class UnsafeUrlError extends Error {
   }
 }
 
-export type Lookup = (host: string) => Promise<Array<{ address: string }>>;
+export type Lookup = (host: string) => Promise<Array<{ address: string; family?: number }>>;
 const defaultLookup: Lookup = (host) => dnsLookup(host, { all: true, verbatim: true });
+
+// Lookup compatibil cu opțiunea `lookup` din http/https: întoarce mereu adresa validată.
+export type PinnedLookup = (host: string, opts: any, cb: (...args: any[]) => void) => void;
+
+export interface PinnedResponse {
+  statusCode?: number;
+  headers: Record<string, string | string[] | undefined>;
+  resume(): unknown;
+  [Symbol.asyncIterator](): AsyncIterator<any>;
+}
+
+export interface TransportOptions {
+  lookup: PinnedLookup;
+  headers: Record<string, string>;
+  signal: AbortSignal;
+}
+export type Transport = (url: URL, opts: TransportOptions) => Promise<PinnedResponse>;
+
+export function pinnedLookup(address: string, family: number): PinnedLookup {
+  return (_host, opts, cb) => {
+    if (opts && opts.all) cb(null, [{ address, family }]);
+    else cb(null, address, family);
+  };
+}
+
+const defaultTransport: Transport = (url, o) =>
+  new Promise((resolve, reject) => {
+    const isHttps = url.protocol === 'https:';
+    const mod = isHttps ? https : http;
+    const req = mod.request(url, {
+      method: 'GET',
+      headers: o.headers,
+      lookup: o.lookup as any,
+      signal: o.signal,
+      ...(isHttps && !isIP(url.hostname.replace(/^\[|\]$/g, '')) ? { servername: url.hostname } : {}),
+    }, (res) => resolve(res as unknown as PinnedResponse));
+    req.on('error', reject);
+    req.end();
+  });
 
 function isPrivateIPv4(ip: string): boolean {
   const p = ip.split('.').map((n) => Number(n));
@@ -107,12 +149,19 @@ export function parsePublicUrl(raw: string): URL {
   return u;
 }
 
-// Validare completă: sintaxă + toate adresele DNS trebuie să fie publice.
-export async function assertPublicUrl(raw: string, lookup: Lookup = defaultLookup): Promise<URL> {
+export interface ResolvedTarget {
+  url: URL;
+  address: string;
+  family: number;
+}
+
+// Validare + rezolvare UNICĂ. Adresa întoarsă e cea care se conectează (pinning).
+export async function resolvePublicUrl(raw: string, lookup: Lookup = defaultLookup): Promise<ResolvedTarget> {
   const u = parsePublicUrl(raw);
   const host = hostOf(u);
-  if (isIP(host)) return u;
-  let addrs: Array<{ address: string }>;
+  const literal = isIP(host);
+  if (literal) return { url: u, address: host, family: literal };
+  let addrs: Array<{ address: string; family?: number }>;
   try {
     addrs = await lookup(host);
   } catch {
@@ -120,11 +169,13 @@ export async function assertPublicUrl(raw: string, lookup: Lookup = defaultLooku
   }
   if (addrs.length === 0) throw new UnsafeUrlError('host-ul nu are adrese');
   if (addrs.some((a) => isPrivateAddress(a.address))) throw new UnsafeUrlError('host rezolvat la adresă privată');
-  return u;
+  const first = addrs[0]!;
+  return { url: u, address: first.address, family: first.family ?? isIP(first.address) };
 }
 
 export type MediaKind = 'image' | 'video' | 'audio';
 
+// dir e directorul temporar al descărcării: apelantul îl șterge în finally (rm recursiv).
 export interface SafeDownloaded {
   path: string;
   dir: string;
@@ -135,7 +186,7 @@ export interface SafeDownloaded {
 
 export interface SafeDownloadOptions {
   lookup?: Lookup;
-  fetchImpl?: typeof fetch;
+  transport?: Transport;
   tmpDir?: string;
   maxBytes?: number;
   timeoutMs?: number;
@@ -160,51 +211,68 @@ function kindOf(ct: string): MediaKind {
 // Erorile nu includ URL-ul (poate avea token semnat în query).
 export async function safeDownloadToTmp(rawUrl: string, opts: SafeDownloadOptions = {}): Promise<SafeDownloaded> {
   const lookup = opts.lookup ?? defaultLookup;
-  const doFetch = opts.fetchImpl ?? fetch;
+  const transport = opts.transport ?? defaultTransport;
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
   const signal = AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const dir = await mkdtemp(join(opts.tmpDir ?? '/tmp', 'src-'));
   try {
-    let current = await assertPublicUrl(rawUrl, lookup);
-    let res = await doFetch(current.href, { redirect: 'manual', signal });
-    for (let hop = 0; res.status >= 300 && res.status < 400 && res.headers.get('location'); hop++) {
-      await res.body?.cancel();
-      if (hop >= MAX_REDIRECTS) throw new UnsafeUrlError('prea multe redirecturi');
-      current = await assertPublicUrl(new URL(res.headers.get('location')!, current).href, lookup);
-      res = await doFetch(current.href, { redirect: 'manual', signal });
-    }
-    if (!res.ok || !res.body) throw new Error(`download eșuat (status ${res.status})`);
-
-    const contentType = (res.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
-    const kind = (() => {
-      try {
-        return kindOf(contentType);
-      } catch (e) {
-        void res.body?.cancel();
-        throw e;
+    let target = rawUrl;
+    let res: PinnedResponse;
+    for (let hop = 0; ; hop++) {
+      const r = await resolvePublicUrl(target, lookup);
+      res = await transport(r.url, {
+        lookup: pinnedLookup(r.address, r.family),
+        headers: { accept: 'video/*,image/*,audio/*,*/*;q=0.5' },
+        signal,
+      });
+      const loc = res.headers['location'];
+      if (res.statusCode !== undefined && res.statusCode >= 300 && res.statusCode < 400 && typeof loc === 'string') {
+        res.resume();
+        if (hop >= MAX_REDIRECTS) throw new UnsafeUrlError('prea multe redirecturi');
+        target = new URL(loc, r.url).href;
+        continue;
       }
-    })();
-    const declared = Number(res.headers.get('content-length') ?? '0');
+      break;
+    }
+    const status = res.statusCode ?? 0;
+    if (status < 200 || status >= 300) {
+      res.resume();
+      throw new Error(`download eșuat (status ${status})`);
+    }
+
+    const ctHeader = res.headers['content-type'];
+    const contentType = (typeof ctHeader === 'string' ? ctHeader : '').split(';')[0]!.trim().toLowerCase();
+    let kind: MediaKind;
+    try {
+      kind = kindOf(contentType);
+    } catch (e) {
+      res.resume();
+      throw e;
+    }
+    const lenHeader = res.headers['content-length'];
+    const declared = Number(typeof lenHeader === 'string' ? lenHeader : '0');
     if (declared > maxBytes) {
-      await res.body.cancel();
+      res.resume();
       throw new UnsafeUrlError('fișier prea mare');
     }
 
-    const dir = await mkdtemp(join(opts.tmpDir ?? '/tmp', 'src-'));
     const path = join(dir, `in${EXT_BY_CT[contentType] ?? '.bin'}`);
     let received = 0;
-    const body = Readable.fromWeb(res.body as any);
-    body.on('data', (chunk: Buffer) => {
-      received += chunk.length;
-      if (received > maxBytes) body.destroy(new UnsafeUrlError('depășită limita de dimensiune'));
+    const counter = new Transform({
+      transform(chunk: Buffer, _enc, cb) {
+        received += chunk.length;
+        if (received > maxBytes) return cb(new UnsafeUrlError('depășită limita de dimensiune'));
+        cb(null, chunk);
+      },
     });
     try {
-      await pipeline(body, createWriteStream(path));
+      await pipeline(res as unknown as NodeJS.ReadableStream, counter, createWriteStream(path));
     } catch (e) {
-      await rm(dir, { recursive: true, force: true });
       throw e instanceof UnsafeUrlError ? e : new Error('download eșuat în timpul transferului');
     }
     return { path, dir, kind, contentType, bytes: received };
   } catch (e) {
+    await rm(dir, { recursive: true, force: true });
     if (e instanceof UnsafeUrlError) throw e;
     throw new Error('download eșuat');
   }
