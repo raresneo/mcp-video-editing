@@ -3,7 +3,7 @@ import { enqueue } from '../jobs.js';
 import { getJob } from '../supabase.js';
 import { downloadToTmp } from '../media/download.js';
 import { cleanup } from '../media/cleanup.js';
-import { FORMAT_DIMS, TMP_DIR } from '../config.js';
+import { FORMAT_DIMS, TMP_DIR, config } from '../config.js';
 import { log } from '../logger.js';
 import {
   normalizeVideo, concatNormalized, mixAudio, trim,
@@ -12,9 +12,8 @@ import {
 import { normalizeImage, textOverlayImage } from '../media/image.js';
 import { generateMusicLyria } from '../media/lyria.js';
 import { supabase } from '../supabase.js';
-import { resolveSegments, buildFfmpegArgs, runFfmpeg } from '../media/effects.js';
-import { mkdtemp } from 'node:fs/promises';
-import { join } from 'node:path';
+import { renderEffects } from '../media/effects.js';
+import { safeDownloadToTmp } from '../media/safeUrl.js';
 
 // ---- Handlerele efective (rulează în background prin jobs.enqueue) ----
 
@@ -148,29 +147,32 @@ async function hOverlay(input: any) {
 
 // apply_video_effects: segmente pe timpul sursei, slow motion și alb-negru selectiv.
 // Sursa rămâne neatinsă; ieșirea e un fișier nou, fără sunet, aceeași rezoluție.
+// Descărcarea e sigură (doar http/https, adrese publice, redirecturi revalidate);
+// ieșirea parțială sau orfană e ștearsă la orice eșec.
 async function hApplyEffects(input: any) {
   const tmp: string[] = [];
   try {
-    const dl = await downloadToTmp(input.video_url); tmp.push(dl.path);
+    const dl = await safeDownloadToTmp(input.video_url, {
+      maxBytes: config.MAX_DOWNLOAD_BYTES,
+      timeoutMs: config.JOB_TIMEOUT_MS,
+      tmpDir: TMP_DIR,
+    });
+    tmp.push(dl.path);
     if (dl.kind !== 'video') throw new Error('apply_video_effects acceptă doar video');
 
     const src = await probe(dl.path);
-    const segs = resolveSegments(input.segments, src.duration);
-
-    const dir = await mkdtemp(join(TMP_DIR, 'fx-'));
-    const out = join(dir, 'out.mp4');
-    await runFfmpeg('/usr/bin/ffmpeg', buildFfmpegArgs(dl.path, out, segs));
-
-    const res = await probe(out);
-    if (res.width !== src.width || res.height !== src.height) {
-      throw new Error('dimensiunile ieșirii diferă de sursă');
-    }
-    if (res.hasAudio) throw new Error('ieșirea nu trebuie să aibă sunet');
-
+    const r = await renderEffects({
+      inputPath: dl.path,
+      outRoot: TMP_DIR,
+      src: { width: src.width, height: src.height, duration: src.duration },
+      segments: input.segments,
+      probe,
+      ffmpegBin: '/usr/bin/ffmpeg',
+    });
     return {
-      localPath: out,
+      localPath: r.path,
       contentType: 'video/mp4',
-      meta: { segments: segs.length, width: res.width, height: res.height, hasAudio: res.hasAudio },
+      meta: { segments: r.segments, width: r.width, height: r.height, hasAudio: false },
     };
   } finally { await cleanup(tmp); }
 }
