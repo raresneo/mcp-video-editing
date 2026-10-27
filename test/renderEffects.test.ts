@@ -69,3 +69,27 @@ test('a successful render keeps the output for upload and reports the result', a
   const kept = await readdir(join(res.path, '..'));
   assert.deepEqual(kept, ['out.mp4']);
 });
+
+test('a truncated output (duration off by more than 0.1s) is rejected and cleaned up', async () => {
+  const root = await emptyRoot();
+  const run = async (_b: string, args: string[]) => { await writeFile(args[args.length - 1]!, 'x'); };
+  await assert.rejects(renderEffects({
+    inputPath: '/tmp/in.mp4', outRoot: root, src: SRC, segments: PLAN, run,
+    probe: async () => ({ width: 1080, height: 1920, duration: 5, hasAudio: false }),
+  }), /diferă de cea așteptată/);
+  await assert.rejects(renderEffects({
+    inputPath: '/tmp/in.mp4', outRoot: root, src: SRC, segments: PLAN, run,
+    probe: async () => ({ width: 1080, height: 1920, duration: 16.95, hasAudio: false }),
+  }), /diferă/);
+  assert.deepEqual(await readdir(root), []);
+});
+
+test('a duration within 0.1s of the expected value passes', async () => {
+  const root = await emptyRoot();
+  const res = await renderEffects({
+    inputPath: '/tmp/in.mp4', outRoot: root, src: SRC, segments: PLAN,
+    run: async (_b, args) => { await writeFile(args[args.length - 1]!, 'x'); },
+    probe: async () => ({ width: 1080, height: 1920, duration: 16.85, hasAudio: false }),
+  });
+  assert.equal(res.segments, 2);
+});
