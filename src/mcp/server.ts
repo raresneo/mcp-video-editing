@@ -13,7 +13,8 @@ import { normalizeImage, textOverlayImage } from '../media/image.js';
 import { generateMusicLyria } from '../media/lyria.js';
 import { supabase } from '../supabase.js';
 import { renderEffects } from '../media/effects.js';
-import { safeDownloadToTmp } from '../media/safeUrl.js';
+import { safeDownloadToTmp, type SafeDownloaded } from '../media/safeUrl.js';
+import { rm } from 'node:fs/promises';
 
 // ---- Handlerele efective (rulează în background prin jobs.enqueue) ----
 
@@ -147,17 +148,16 @@ async function hOverlay(input: any) {
 
 // apply_video_effects: segmente pe timpul sursei, slow motion și alb-negru selectiv.
 // Sursa rămâne neatinsă; ieșirea e un fișier nou, fără sunet, aceeași rezoluție.
-// Descărcarea e sigură (doar http/https, adrese publice, redirecturi revalidate);
-// ieșirea parțială sau orfană e ștearsă la orice eșec.
+// Descărcarea e sigură (adrese publice fixate pe conexiune, redirecturi revalidate).
+// Directorul de descărcare e șters în finally; ieșirea renderizată e păstrată doar la succes.
 async function hApplyEffects(input: any) {
-  const tmp: string[] = [];
+  let dl: SafeDownloaded | undefined;
   try {
-    const dl = await safeDownloadToTmp(input.video_url, {
+    dl = await safeDownloadToTmp(input.video_url, {
       maxBytes: config.MAX_DOWNLOAD_BYTES,
       timeoutMs: config.JOB_TIMEOUT_MS,
       tmpDir: TMP_DIR,
     });
-    tmp.push(dl.path);
     if (dl.kind !== 'video') throw new Error('apply_video_effects acceptă doar video');
 
     const src = await probe(dl.path);
@@ -174,7 +174,9 @@ async function hApplyEffects(input: any) {
       contentType: 'video/mp4',
       meta: { segments: r.segments, width: r.width, height: r.height, hasAudio: false },
     };
-  } finally { await cleanup(tmp); }
+  } finally {
+    if (dl) await rm(dl.dir, { recursive: true, force: true });
+  }
 }
 
 async function enqueueMusic(name: string, input: any, key: string | null): Promise<any> {
