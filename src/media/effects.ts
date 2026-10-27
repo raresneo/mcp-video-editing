@@ -31,6 +31,8 @@ export const SATURATION_MAX = 2;
 // Limite de resurse: sursa max 120s, durata estimată a ieșirii max 120s.
 export const MAX_SOURCE_S = 120;
 export const MAX_OUTPUT_S = 120;
+// Toleranță pe durata ieșirii față de cea estimată (un cadru la 24fps ≈ 0.042s, marjă la 0.1s).
+export const DURATION_TOL_S = 0.1;
 const EFFECTS: readonly Effect[] = ['none', 'grayscale'];
 
 export interface ProbeResult {
@@ -164,8 +166,8 @@ export function runFfmpeg(bin: string, args: string[], timeoutMs = 300_000): Pro
   });
 }
 
-// Randează ieșirea într-un director nou. Orice eșec șterge directorul (nu rămâne ieșire orfană);
-// la succes ieșirea e păstrată pentru upload.
+// Randează ieșirea într-un director nou. Orice eșec (ffmpeg, probe, dimensiuni, sunet,
+// durată în afara toleranței) șterge directorul; la succes ieșirea e păstrată pentru upload.
 export async function renderEffects(opts: {
   inputPath: string;
   outRoot: string;
@@ -185,6 +187,10 @@ export async function renderEffects(opts: {
       throw new Error('dimensiunile ieșirii diferă de sursă');
     }
     if (res.hasAudio) throw new Error('ieșirea nu trebuie să aibă sunet');
+    const expected = outputDuration(segs);
+    if (Math.abs(res.duration - expected) > DURATION_TOL_S) {
+      throw new Error(`durata ieșirii (${res.duration.toFixed(3)}s) diferă de cea așteptată (${expected.toFixed(3)}s)`);
+    }
     return { path: out, segments: segs.length, width: res.width, height: res.height };
   } catch (e) {
     await rm(dir, { recursive: true, force: true });
