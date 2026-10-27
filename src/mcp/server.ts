@@ -3,7 +3,7 @@ import { enqueue } from '../jobs.js';
 import { getJob } from '../supabase.js';
 import { downloadToTmp } from '../media/download.js';
 import { cleanup } from '../media/cleanup.js';
-import { FORMAT_DIMS } from '../config.js';
+import { FORMAT_DIMS, TMP_DIR } from '../config.js';
 import { log } from '../logger.js';
 import {
   normalizeVideo, concatNormalized, mixAudio, trim,
@@ -12,6 +12,9 @@ import {
 import { normalizeImage, textOverlayImage } from '../media/image.js';
 import { generateMusicLyria } from '../media/lyria.js';
 import { supabase } from '../supabase.js';
+import { resolveSegments, buildFfmpegArgs, runFfmpeg } from '../media/effects.js';
+import { mkdtemp } from 'node:fs/promises';
+import { join } from 'node:path';
 
 // ---- Handlerele efective (rulează în background prin jobs.enqueue) ----
 
@@ -143,6 +146,35 @@ async function hOverlay(input: any) {
   } finally { await cleanup(tmp); }
 }
 
+// apply_video_effects: segmente pe timpul sursei, slow motion și alb-negru selectiv.
+// Sursa rămâne neatinsă; ieșirea e un fișier nou, fără sunet, aceeași rezoluție.
+async function hApplyEffects(input: any) {
+  const tmp: string[] = [];
+  try {
+    const dl = await downloadToTmp(input.video_url); tmp.push(dl.path);
+    if (dl.kind !== 'video') throw new Error('apply_video_effects acceptă doar video');
+
+    const src = await probe(dl.path);
+    const segs = resolveSegments(input.segments, src.duration);
+
+    const dir = await mkdtemp(join(TMP_DIR, 'fx-'));
+    const out = join(dir, 'out.mp4');
+    await runFfmpeg('/usr/bin/ffmpeg', buildFfmpegArgs(dl.path, out, segs));
+
+    const res = await probe(out);
+    if (res.width !== src.width || res.height !== src.height) {
+      throw new Error('dimensiunile ieșirii diferă de sursă');
+    }
+    if (res.hasAudio) throw new Error('ieșirea nu trebuie să aibă sunet');
+
+    return {
+      localPath: out,
+      contentType: 'video/mp4',
+      meta: { segments: segs.length, width: res.width, height: res.height, hasAudio: res.hasAudio },
+    };
+  } finally { await cleanup(tmp); }
+}
+
 async function enqueueMusic(name: string, input: any, key: string | null): Promise<any> {
   const { data, error } = await supabase.from('video_jobs').insert({
     tool: name, input, idempotency_key: key
@@ -190,6 +222,7 @@ export async function runTool(name: string, args: any): Promise<any> {
     case 'trim_video': return enqueue(name, args, key, hTrim);
     case 'normalize_platform': return enqueue(name, args, key, hNormalize);
     case 'add_text_overlay_image': return enqueue(name, args, key, hOverlay);
+    case 'apply_video_effects': return enqueue(name, args, key, hApplyEffects);
     case 'generate_music': return enqueueMusic(name, args, key);
     case 'list_audio_library': return hListAudioLibrary(args);
     case 'get_job_status': {
