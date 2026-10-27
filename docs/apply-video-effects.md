@@ -20,34 +20,40 @@ sunt păstrate intacte.
 ## Limite de resurse
 
 - Sursa: maximum 120 secunde.
-- Durata estimată a ieșirii (după viteză): maximum 120 secunde. Exemplu: 100s sursă cu `speed` 0.25 pe tot ar ieși 400s și e respinsă.
+- Durata estimată a ieșirii (după viteză): maximum 120 secunde.
 - Dimensiunea descărcării: `MAX_DOWNLOAD_BYTES` (implicit 200 MB). Timeout: `JOB_TIMEOUT_MS` (implicit 300 s).
 - Maximum 16 segmente.
 
 ## Reguli pentru `video_url`
 
 - Doar `http` și `https`, porturi standard, fără credențiale în URL.
-- Doar adrese publice: IP-urile literale și toate adresele DNS rezolvate trebuie să fie publice. Adresele private, loopback, link-local (inclusiv metadata 169.254.169.254) și IPv6 echivalente sunt blocate.
-- Fiecare redirect e revalidat înainte de cerere; maximum 3 redirecturi.
-- Doar conținut `video/*` (sau `image/*` / `audio/*` pentru celelalte tool-uri ale serverului, nu acest tool).
+- Fiecare hop: DNS se interoghează o singură dată. Toate adresele rezolvate trebuie să fie publice; adresele private, loopback, link-local (inclusiv metadata 169.254.169.254) și IPv6 echivalente (inclusiv IPv4-mapped) sunt blocate.
+- Conexiunea e fixată (pinned) pe prima adresă validată: lookup-ul din request întoarce mereu adresa validată, fără a doua rezoluție DNS. TLS folosește hostname-ul original (SNI și verificare certificat).
+- Fiecare redirect e tratat manual: ținta nouă e validată și fixată separat înainte de cerere. Maximum 3 redirecturi.
+- Doar conținut `video/*` pentru acest tool.
 - Erorile nu includ URL-ul complet (query-ul semnat rămâne privat).
-- Limită cunoscută: conexiunea nu e fixată pe adresa validată; un atacator cu control DNS ar putea încerca rebinding între validare și cerere. Pentru un deploy cu cerințe stricte, rulați serverul într-o rețea de egress restricționată.
 
-Alte tool-uri (`concat_clips`, `add_audio`, `trim_clip` etc.) folosesc încă descărcarea veche și nu beneficiază de aceste reguli în acest PR.
+## Eșecuri și curățare
 
-## Eșecuri
+- Directorul de descărcare al sursei e șters în `finally`, la succes și la eșec.
+- La eșec (ffmpeg, probe, dimensiuni, sunet în ieșire, durată în afara toleranței) directorul de ieșire e șters.
+- La succes ieșirea e păstrată pentru upload.
 
-La orice eșec (ffmpeg, probe, dimensiuni greșite, sunet în ieșire) directorul de ieșire e șters.
-La succes, ieșirea e păstrată pentru upload. Fișierul sursă descărcat e șters ca de obicei.
+## Validarea ieșirii
+
+- Dimensiunile trebuie să fie identice cu sursa.
+- Ieșirea nu are audio.
+- Durata trebuie să fie în ±0.1 s față de durata estimată din segmente. Ieșirile trunchiate nu trec.
 
 ## Limite de procesare
 
 - Încetinirea nu interpolează cadre: ritmul e mai lent, dar fără cadre generate.
 - `fps` nu schimbă viteza mișcării; schimbarea de viteză e doar prin `speed`.
-- Nu există audio în ieșire.
 
 ## Testare
 
-- `npm run test:unit`: validare, construcție argumente ffmpeg, cleanup la eșec, reguli URL (mock DNS și fetch, fără rețea reală).
-- `npm run test:smoke`: render real pe un fișier. Rulează doar cu `FFMPEG_FIXTURE=/cale/sursa.mp4` setat; altfel e sărit.
-- Typecheck și build (`npm run typecheck`, `npm run build`) și `npm run test:client` trebuie rulate în mediul de deploy; nu sunt incluse în această verificare.
+- `npm run test:unit`: validare, argumente ffmpeg, curățare la eșec, validare durată, reguli URL cu DNS și transport mock (fără rețea reală, fără adrese private contactate, inclusiv test de rebinding și redirect pinning).
+- `npm run test:smoke`: render real pe un fișier. Rulează doar cu `FFMPEG_FIXTURE=/cale/sursa.mp4`; altfel e sărit.
+- `npm run typecheck`, `npm run build` și `npm run test:client` rulează în mediul de deploy.
+
+Alte tool-uri (`concat_clips`, `add_audio`, `trim_clip` etc.) folosesc încă descărcarea veche și nu beneficiază de aceste reguli în acest PR.
