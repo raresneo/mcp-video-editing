@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 
 // Efecte selective pe segmente din TIMPUL sursei. Segmentele nedeclarate
 // raman neschimbate. Fara sunet, fara shell: argumentele ajung ca array.
@@ -26,7 +28,19 @@ export const SPEED_MIN = 0.25;
 export const SPEED_MAX = 2;
 export const SATURATION_MIN = 0;
 export const SATURATION_MAX = 2;
+// Limite de resurse: sursa max 120s, durata estimată a ieșirii max 120s.
+export const MAX_SOURCE_S = 120;
+export const MAX_OUTPUT_S = 120;
 const EFFECTS: readonly Effect[] = ['none', 'grayscale'];
+
+export interface ProbeResult {
+  width: number;
+  height: number;
+  duration: number;
+  hasAudio: boolean;
+}
+export type ProbeFn = (path: string) => Promise<ProbeResult>;
+export type RunFn = (bin: string, args: string[]) => Promise<void>;
 
 function num(v: unknown, field: string): number {
   if (typeof v !== 'number' || !Number.isFinite(v)) {
@@ -35,10 +49,18 @@ function num(v: unknown, field: string): number {
   return v;
 }
 
+// Durata estimată a ieșirii (secunde), după aplicarea vitezei.
+export function outputDuration(segs: ResolvedSegment[]): number {
+  return segs.reduce((sum, s) => sum + (s.end - s.start) / s.speed, 0);
+}
+
 // Valideaza planul si umple golurile cu segmente intacte (speed 1, fara efect).
 export function resolveSegments(input: unknown, duration: number): ResolvedSegment[] {
   if (!Number.isFinite(duration) || duration <= 0) {
     throw new Error('durata sursei nu e valida');
+  }
+  if (duration > MAX_SOURCE_S) {
+    throw new Error(`sursa depășește ${MAX_SOURCE_S}s`);
   }
   if (!Array.isArray(input) || input.length === 0) {
     throw new Error('segments trebuie sa fie o lista nevida');
@@ -90,6 +112,11 @@ export function resolveSegments(input: unknown, duration: number): ResolvedSegme
   if (cursor < duration) {
     full.push({ start: cursor, end: duration, speed: 1, effect: 'none', saturation: 1 });
   }
+
+  const outDur = outputDuration(full);
+  if (outDur > MAX_OUTPUT_S) {
+    throw new Error(`durata estimată a ieșirii (${outDur.toFixed(3)}s) depășește ${MAX_OUTPUT_S}s`);
+  }
   return full;
 }
 
@@ -135,4 +162,32 @@ export function runFfmpeg(bin: string, args: string[], timeoutMs = 300_000): Pro
       else resolve();
     });
   });
+}
+
+// Randează ieșirea într-un director nou. Orice eșec șterge directorul (nu rămâne ieșire orfană);
+// la succes ieșirea e păstrată pentru upload.
+export async function renderEffects(opts: {
+  inputPath: string;
+  outRoot: string;
+  src: { width: number; height: number; duration: number };
+  segments: unknown;
+  probe: ProbeFn;
+  run?: RunFn;
+  ffmpegBin?: string;
+}): Promise<{ path: string; segments: number; width: number; height: number }> {
+  const segs = resolveSegments(opts.segments, opts.src.duration);
+  const dir = await mkdtemp(join(opts.outRoot, 'fx-'));
+  const out = join(dir, 'out.mp4');
+  try {
+    await (opts.run ?? runFfmpeg)(opts.ffmpegBin ?? 'ffmpeg', buildFfmpegArgs(opts.inputPath, out, segs));
+    const res = await opts.probe(out);
+    if (res.width !== opts.src.width || res.height !== opts.src.height) {
+      throw new Error('dimensiunile ieșirii diferă de sursă');
+    }
+    if (res.hasAudio) throw new Error('ieșirea nu trebuie să aibă sunet');
+    return { path: out, segments: segs.length, width: res.width, height: res.height };
+  } catch (e) {
+    await rm(dir, { recursive: true, force: true });
+    throw e;
+  }
 }
