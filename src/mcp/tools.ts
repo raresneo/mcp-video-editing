@@ -155,5 +155,32 @@ export const TOOLS = [
         mood: { type: 'string' }
       }
     }
-  }
+  },
+  {
+    name: 'apply_video_effects',
+    description: 'Aplică slow motion (speed 0.25-2) și/sau alb-negru pe segmente din timpul sursei. Segmentele nedeclarate rămân intacte. Ieșire MP4 fără sunet, aceeași rezoluție. Returnează job_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        video_url: { type: 'string' },
+        segments: {
+          type: 'array',
+          maxItems: 16,
+          items: {
+            type: 'object',
+            properties: {
+              start: { type: 'number', description: 'Secunda de start în sursă' },
+              end: { type: 'number', description: 'Secunda de final în sursă, start < end' },
+              speed: { type: 'number', minimum: 0.25, maximum: 2, default: 1 },
+              effect: { type: 'string', enum: ['none', 'grayscale'], default: 'none' },
+              saturation: { type: 'number', minimum: 0, maximum: 2, default: 1 },
+            },
+            required: ['start', 'end'],
+          },
+        },
+        idempotency_key: { type: 'string' },
+      },
+      required: ['video_url', 'segments'],
+    },
+  },
 ];
